@@ -1,0 +1,196 @@
+/**
+ * English. Same keys as de.ts, in the same order - a key missing here falls back to German.
+ *
+ * Written as English, not as a translation of the German: the same thing said the way an
+ * English speaker would say it.
+ */
+export default {
+	/* ---------------------------------------------------------------- common. */
+	"common.cancel": "Cancel",
+	"common.save": "Save",
+	"common.add": "Add",
+	"common.create": "Create",
+	"common.remove": "Remove",
+	"common.play": "Play",
+	"common.starting": "Starting",
+	"common.loading": "Loading …",
+	"common.more": "Load more",
+	"common.close": "Close",
+	"common.back": "Back",
+	"common.auto": "Auto",
+	"common.none": "None",
+	"common.detected": "detected",
+	"common.optional": "Optional",
+	"common.default": "Default",
+	"common.search": "Search",
+
+	/* ------------------------------------------------------------------ nav. */
+	"nav.servers": "Servers",
+	"nav.instances": "Instances",
+	"nav.settings": "Settings",
+
+	/* -------------------------------------------------------------- servers. */
+	"servers.title": "Servers",
+	"servers.empty.title": "No servers yet",
+	"servers.empty.hint":
+		"Enter an address — the client pulls version, mods and configs from the server itself.",
+	"servers.address": "Address",
+	"servers.addressInvalid": "An address like mc.example.com or mc.example.com:25565",
+	"servers.name": "Name",
+	"servers.add.title": "Add server",
+	"servers.addAction": "Server",
+	"servers.refresh": "Check again",
+	"servers.setup": "Set up",
+	"servers.action.setup": "Set up {name}",
+	"servers.action.remove": "Remove {name}",
+	"servers.action.mods": "Mods for {name}",
+	"servers.facts.checking": "checking …",
+	"servers.facts.unreachable": "unreachable",
+	"servers.facts.noManifest": "reachable · version unclear — set it under Set up",
+	"servers.loading": "Loading servers …",
+	"servers.mods": "{count} mods",
+	"servers.configs": "{count} configs",
+	"servers.players": "{online}/{max}",
+
+	/* ------------------------------------------------------------ instances. */
+	"instances.title": "Instances",
+	"instances.empty.title": "No instances yet",
+	"instances.empty.hint":
+		"Pick a version and a loader, then add mods — for singleplayer or any server that fits.",
+	"instances.create.title": "Create instance",
+	"instances.addAction": "Instance",
+	"instances.version": "Minecraft version",
+	"instances.versionPick": "Choose a version",
+	"instances.versionsUnavailable": "Version list unreachable — open the dialog again",
+	"instances.loader": "Mod loader",
+	"instances.loaderVersion": "Loader version",
+	"instances.newest": "Latest",
+	"instances.noMods": "no mods",
+	"instances.name": "Name",
+	"instances.action.remove": "Remove {name}",
+	"instances.action.mods": "Mods for {name}",
+	"instances.loading": "Loading instances …",
+
+	/* ---------------------------------------------------------------- setup. */
+	"setup.title": "Set up server",
+	"setup.description": "Only needed when detection gets it wrong. Otherwise leave it automatic.",
+	"setup.detected": "Detected",
+	"setup.undetected": "not detected yet",
+	"setup.version": "Minecraft version",
+	"setup.versionAuto": "Automatic",
+	"setup.versionDetected": "{version} · detected",
+	"setup.loader": "Mod loader",
+	"setup.loaderNone": "Vanilla (no mods)",
+	"setup.hint.proxy":
+		"Proxies and ViaVersion answer with the oldest version they accept — not the one you want to play.",
+	"setup.hint.vanilla":
+		"Vanilla and Paper announce no loader at all. Client-side mods still work.",
+	"setup.save": "Apply",
+	"setup.checking": "Checking …",
+
+	/* -------------------------------------------------------------- profile. */
+	"profile.title": "Play with what?",
+	"profile.description": "{name}",
+	"profile.serverDefault": "The way the server has it",
+	"profile.serverDefaultHint": "not detected yet",
+	"profile.create": "New profile …",
+	"profile.createHint": "Your own instance with your mods for this server",
+	"profile.version": "Version",
+	"profile.versionHint": "A server only reports the oldest protocol it accepts. If it supports several versions, pick the one you want to play here.",
+	"profile.none": "Instances on a matching version show up here.",
+	"profile.play": "Play",
+
+	/* ----------------------------------------------------------------- mods. */
+	"mods.title": "Mods",
+	"mods.tab.search": "Catalogue",
+	"mods.tab.installed": "Installed",
+	"mods.tab.pack": "In the pack",
+	"mods.hint.search": "Only what runs without a server side. Greyed out: already in the pack.",
+	"mods.hint.installed": "Your own mods for this server.",
+	"mods.hint.pack": "Everything the server ships.",
+	"mods.search": "Search mods …",
+	"mods.inPack": "in the pack",
+	"mods.installed": "installed",
+	"mods.willBeRemoved": "will be removed",
+	"mods.install": "Install",
+	"mods.remove": "Remove",
+	"mods.selected": "{count} selected",
+	"mods.nothing": "Nothing here",
+	"mods.nothingOwn": "Nothing of your own yet",
+	"mods.notFound": "Nothing found",
+	"mods.installedCount": "{count} installed, they live in your profile",
+	"mods.installedNone": "Nothing installed — none of it fits this version.",
+	"mods.removedCount": "{count} removed",
+	"mods.removedNone": "Nothing removed",
+	"mods.modrinthOnly": "Modrinth only without a CurseForge key — add one under Settings › Advanced.",
+
+	/* ------------------------------------------------------------- settings. */
+	"settings.title": "Settings",
+	"settings.tab.general": "General",
+	"settings.tab.java": "Java",
+	"settings.tab.advanced": "Advanced",
+	"settings.language": "Language",
+	"settings.languageSystem": "Follow the system",
+	"settings.offlineName": "Name without signing in",
+	"settings.offlineNameHint":
+		"Used only while there is no session. Online-mode servers will refuse it.",
+	"settings.keepOpen": "Keep the launcher open",
+	"settings.keepOpenHint": "The window stays visible while the game runs.",
+	"settings.memory": "Memory",
+	"settings.memoryAuto": "Automatic",
+	"settings.memoryHint": "Auto follows the size of the pack.",
+	"settings.machineMemory": "{gb} GB in this machine",
+	"settings.heapValue": "{mb} MB · {gb} GB",
+	"settings.gc": "Garbage collector",
+	"settings.gc.balanced": "Balanced (G1)",
+	"settings.gc.balancedHint": "G1 with short pauses. Right for most packs.",
+	"settings.gc.throughput": "Throughput (ZGC)",
+	"settings.gc.throughputHint":
+		"ZGC keeps pauses under a millisecond, in exchange for more RAM and more cores.",
+	"settings.gc.default": "Default",
+	"settings.gc.defaultHint": "Just -Xmx. Java picks the collector itself.",
+	"settings.gc.custom": "Custom",
+	"settings.gc.customHint": "Your flags, passed to the JVM as they are. Nothing is added.",
+	"settings.flags": "Flags",
+	"settings.flagsUnavailable": "Preview unavailable",
+	"settings.flagsHint": "Exactly what goes to the JVM on launch.",
+	"settings.flagsAutoHint":
+		"On auto the heap grows with the mod count; this shows the value for a pack with no mods.",
+	"settings.customArgs": "Custom flags",
+	"settings.manifestPort": "Manifest port",
+	"settings.manifestPortInvalid": "A port between 1 and 65535.",
+	"settings.manifestPortHint":
+		"The port the launcher asks for the server's manifest on. Must match the server mod.",
+	"settings.curseforgeKey": "CurseForge key",
+	"settings.curseforgeKeyHint": "Without a key the catalogue searches Modrinth only.",
+	"settings.dataDir": "Data directory",
+
+	/* ------------------------------------------------------------- progress. */
+	"progress.prepare": "Getting ready",
+	"progress.probe": "Asking the server",
+	"progress.mods.sync": "Comparing mods",
+	"progress.mods.download": "Downloading mods",
+	"progress.mods.summary": "Mods",
+	"progress.config": "Configuration",
+	"progress.java": "Preparing Java",
+	"progress.download": "Downloading files",
+	"progress.launch": "Minecraft is starting",
+
+	/* ---------------------------------------------------------------- error. */
+	"error.noAddress": "No address given",
+	"error.noVersionChosen": "No version chosen",
+	"error.serverNoVersion": "The server answers, but does not say which version it runs.",
+	"error.noManifest": "The server publishes no manifest.",
+	"error.noSuchServer": "That server is gone.",
+	"error.noSuchInstance": "That instance is gone.",
+	"error.unknownLoader": "Unknown mod loader.",
+
+	/* --------------------------------------------------------------- status. */
+	"status.ready": "reachable",
+	"status.unknown": "reachable, no manifest",
+	"status.offline": "unreachable",
+	"status.checking": "checking",
+	"status.notSignedIn": "not signed in",
+	"status.notSignedInHint": "Without signing in you can only reach offline-mode servers",
+	"status.offlineBadge": "offline"
+};

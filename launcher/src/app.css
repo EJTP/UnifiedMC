@@ -134,6 +134,21 @@
     user-select: text;
   }
 
+  /*
+   * A native select paints its list with the system theme, not the page's - so a dark app
+   * gets a white dropdown. The control itself takes our colours; colour-scheme is what makes
+   * the browser render the popup dark as well.
+   */
+  select {
+    color-scheme: dark;
+    @apply cursor-pointer;
+  }
+
+  select option {
+    background: var(--popover);
+    color: var(--popover-foreground);
+  }
+
   ::-webkit-scrollbar {
     width: 10px;
     height: 10px;
@@ -150,6 +165,20 @@
   ::-webkit-scrollbar-thumb:hover {
     background: var(--muted-foreground);
     background-clip: content-box;
+  }
+}
+
+/*
+ * The indeterminate progress sweep. It lives here and not in the component: Svelte renames
+ * @keyframes declared inside a component, and the Tailwind class that plays it is generated
+ * out here - the renamed one would never be found and the bar would sit still.
+ */
+@keyframes sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
   }
 }
 

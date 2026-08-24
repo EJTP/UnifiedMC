@@ -32,29 +32,53 @@ function sample(command: string, args: Record<string, unknown>): unknown {
 		case "bootstrap":
 			return {
 				servers: [
-					{ id: "1", name: "All of Create Aeronautics", address: "194.54.88.19:25601" },
-					{ id: "2", name: "Vanilla", address: "mc.example.com" },
-					{ id: "3", name: "Testserver", address: "10.0.0.5:25565" }
+					{ id: "1", name: "All of Create Aeronautics", address: "194.54.88.19:25601", loader: null, minecraft: null },
+					{ id: "2", name: "Paper", address: "mc.example.com", loader: "fabric", minecraft: null },
+					{ id: "3", name: "Testserver", address: "10.0.0.5:25565", loader: null, minecraft: null },
+					{ id: "4", name: "Vanilla Survival", address: "play.example.net", loader: null, minecraft: null }
 				],
-				settings: { memory: 0, offline_name: "Player", manifest_port: 25673, keep_open: true },
-				session: { name: "EJTP", uuid: "0", token: "t", kind: "microsoft" }
+				settings: {
+					language: "system", memory: 0, offline_name: "Player", manifest_port: 25673,
+					keep_open: true, curseforge_key: "", jvm_profile: "balanced", jvm_args: ""
+				},
+				session: { name: "EJTP", uuid: "0", token: "t", kind: "microsoft" },
+				unknown_server_icon: null
 			};
 		case "probe": {
 			const id = String(args.id);
+
 			if (id === "3") {
-				return { id, online: false, error: "connection timed out", motd: "", players: 0, max_players: 0, manifest: null };
+				return { id, online: false, error: "connection timed out", motd: [], icon: null, players: 0, max_players: 0, manifest: null };
+			}
+			// Vanilla: reachable, announces a version and no loader at all - the case where the
+			// player has to be asked what to run, and where the setup dialog earns its place.
+			if (id === "4") {
+				return {
+					id, online: true, error: null,
+					motd: [{ text: "Survival, seit 2019" }],
+					icon: null, players: 7, max_players: 40,
+					manifest: { minecraft: "1.21.8", loader: null, mods: [], config: [] }
+				};
 			}
 			const modded = id === "1";
 			return {
 				id,
 				online: true,
 				error: null,
-				motd: modded ? "Create Aeronautics" : "A Minecraft Server",
+				motd: modded
+					? [
+							{ text: "Create ", color: "#FFAA00", bold: true },
+							{ text: "Aeronautics", color: "#55FFFF" }
+						]
+					: [{ text: "A Minecraft Server" }],
+				icon: null,
 				players: modded ? 3 : 12,
 				max_players: modded ? 20 : 60,
 				manifest: {
 					minecraft: modded ? "1.21.1" : "1.21.11",
-					loader: modded ? { type: "neoforge", version: "21.1.247" } : null,
+					loader: modded
+						? { type: "neoforge", version: "21.1.247" }
+						: { type: "fabric", version: "0.19.3" },
 					mods: Array.from({ length: modded ? 214 : 0 }, (_, i) => ({
 						name: `mod-${i}.jar`, sha1: String(i), url: ""
 					})),
@@ -69,34 +93,34 @@ function sample(command: string, args: Record<string, unknown>): unknown {
 			if (tab === "pack") {
 				return Array.from({ length: 40 }, (_, i) => ({
 					id: String(i), title: `packmod-${i}.jar`, description: "",
-					downloads: 0, source: "pack", on_server: true, icon: null
+					downloads: 0, source: "pack", on_server: true, installed: false, icon: null
 				}));
 			}
 			if (tab === "installed") {
 				return [
 					{ id: "simplerpc.jar", title: "SimpleRPC-4.1.4.jar", description: "in deinem Profil",
-					  downloads: 0, source: "profile", on_server: false, icon: null }
+					  downloads: 0, source: "profile", on_server: false, installed: false, icon: null }
 				];
 			}
 			const page = Number(args.offset ?? 0) / 40;
 			const catalogue = [
 				{ id: "sodium", title: "Sodium", description: "Moderne Rendering-Engine, deutlich mehr FPS",
-				  downloads: 42_000_000, source: "modrinth", on_server: true,
+				  downloads: 42_000_000, source: "modrinth", on_server: true, installed: false,
 				  icon: "https://cdn.modrinth.com/data/AANobbMI/icon.png" },
 				{ id: "iris", title: "Iris Shaders", description: "Shader-Unterstützung, kompatibel mit Sodium",
-				  downloads: 28_000_000, source: "modrinth", on_server: false,
+				  downloads: 28_000_000, source: "modrinth", on_server: false, installed: false,
 				  icon: "https://cdn.modrinth.com/data/YL57xq9U/icon.png" },
 				{ id: "cf:263420", title: "Xaero's Minimap", description: "Karte in der Ecke",
-				  downloads: 241_000_000, source: "curseforge", on_server: true,
+				  downloads: 241_000_000, source: "curseforge", on_server: true, installed: false,
 				  icon: "https://media.forgecdn.net/avatars/thumbnails/175/905/64/64/636426383151327212.png" },
 				{ id: "chat-heads", title: "Chat Heads", description: "Zeigt den Kopf des Absenders im Chat",
-				  downloads: 9_400_000, source: "modrinth", on_server: false,
+				  downloads: 9_400_000, source: "modrinth", on_server: false, installed: false,
 				  icon: "https://cdn.modrinth.com/data/Wb5oqrBJ/icon.png" },
 				{ id: "appleskin", title: "AppleSkin", description: "Zeigt Sättigung und Nährwerte an",
-				  downloads: 31_000_000, source: "modrinth", on_server: false,
+				  downloads: 31_000_000, source: "modrinth", on_server: false, installed: false,
 				  icon: "https://cdn.modrinth.com/data/EsAfCjCV/icon.png" },
 				{ id: "jei", title: "Just Enough Items", description: "Rezepte nachschlagen",
-				  downloads: 88_000_000, source: "modrinth", on_server: false,
+				  downloads: 88_000_000, source: "modrinth", on_server: false, installed: false,
 				  icon: "https://cdn.modrinth.com/data/u6dRKJwZ/icon.png" }
 			];
 			return catalogue.map((hit, i) => ({ ...hit, id: page ? `${hit.id}-${page}-${i}` : hit.id,
@@ -106,7 +130,60 @@ function sample(command: string, args: Record<string, unknown>): unknown {
 			return ["iris-neoforge.jar", "sodium-neoforge.jar"];
 		case "remove_mods":
 			return args.names;
+		case "instances":
+			return sampleInstances();
+		// Appends rather than answering with an empty list, because the caller reads the new
+		// instance back as the last entry - an empty answer reads as "creation did nothing".
+		case "add_instance":
+			return [
+				...sampleInstances(),
+				{
+					id: "new",
+					name: String(args.name || `Minecraft ${args.minecraft}`),
+					minecraft: String(args.minecraft ?? ""),
+					loader: (args.loader as string | null) ?? null,
+					loader_version: (args.loaderVersion as string | null) ?? null,
+					source: null
+				}
+			];
+		case "remove_instance":
+			return sampleInstances();
+		case "loader_versions": {
+			const loader = String(args.loader);
+			if (loader === "fabric") return ["0.19.3", "0.19.2", "0.19.1", "0.18.6"];
+			if (loader === "neoforge") return ["21.1.248", "21.1.247", "21.1.244"];
+			if (loader === "forge") return ["1.21.1-52.1.16", "1.21.1-52.1.15"];
+			if (loader === "quilt") return ["0.30.1-beta.3", "0.30.0"];
+			return [];
+		}
+		case "machine_memory":
+			return 16384;
+		case "data_dir":
+			return "/home/spieler/.unifiedmc";
+		case "jvm_preview":
+			// No -Xms: lyceris only ever emits -Xmx, and a preview that shows a flag the
+			// launcher never passes is worse than no preview.
+			return [
+				"-Xmx6144M", "-XX:+UseG1GC", "-XX:MaxGCPauseMillis=50",
+				"-XX:G1HeapRegionSize=16M", "-XX:+UnlockExperimentalVMOptions",
+				"-XX:+DisableExplicitGC", "-Dfml.ignoreInvalidMinecraftCertificates=true"
+			];
+		case "save_settings":
+			return args.settings;
+		case "versions":
+			return ["1.21.11", "1.21.10", "1.21.8", "1.21.1", "1.20.6", "1.20.1", "1.16.5", "1.8.9"];
+		case "player_head":
+			return null;
 		default:
 			return null;
 	}
+}
+
+function sampleInstances() {
+	return [
+		{ id: "a1", name: "Create Astral", minecraft: "1.18.2", loader: "forge",
+		  loader_version: "1.18.2-40.2.0", source: "mrpack" },
+		{ id: "b2", name: "Sodium Test", minecraft: "1.21.1", loader: "neoforge",
+		  loader_version: null, source: null }
+	];
 }

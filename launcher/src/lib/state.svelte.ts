@@ -1,5 +1,17 @@
 import { call, onProgress } from "./bridge";
-import type { Hit, Progress, SavedServer, ServerStatus, Session, Settings } from "./types";
+import { locale, resolveLocale, t, translate } from "./i18n.svelte";
+import type {
+	Hit,
+	Instance,
+	Progress,
+	SavedServer,
+	ServerStatus,
+	Session,
+	Settings
+} from "./types";
+
+/** Which of the two halves the window is showing. */
+export type View = "servers" | "instances";
 
 export type Tab = "search" | "installed" | "pack";
 
@@ -11,24 +23,70 @@ const PAGE = 40;
  * so a screen can never be half-populated by its own timing.
  */
 class LauncherState {
+	view = $state<View>("servers");
 	servers = $state<SavedServer[]>([]);
+	instances = $state<Instance[]>([]);
 	status = $state<Record<string, ServerStatus>>({});
-	settings = $state<Settings>({ memory: 0, offline_name: "Player", manifest_port: 25566, keep_open: true });
+	settings = $state<Settings>({
+		language: "system",
+		memory: 0,
+		offline_name: "Player",
+		manifest_port: 25566,
+		keep_open: true,
+		curseforge_key: "",
+		jvm_profile: "balanced",
+		jvm_args: ""
+	});
 	session = $state<Session | null>(null);
 	progress = $state<Progress | null>(null);
+	/** Minecraft's own "no icon" texture, read from the copy on this machine. */
+	unknownServerIcon = $state<string | null>(null);
+	/** The player's face, from their skin. Fetched separately so the window draws first. */
+	playerHead = $state<string | null>(null);
 	playing = $state<string | null>(null);
 	error = $state<string | null>(null);
+	/** Whether the stored lists have arrived. Before that, empty means "not read yet". */
+	booted = $state(false);
 
 	async start() {
-		const boot = await call<{ servers: SavedServer[]; settings: Settings; session: Session }>(
-			"bootstrap"
-		);
+		let boot;
+		try {
+			boot = await call<{
+				servers: SavedServer[];
+				settings: Settings;
+				session: Session;
+				unknown_server_icon: string | null;
+			}>("bootstrap");
+		} catch (error) {
+			// Nothing else can run, so the window has to say why rather than sit on "loading".
+			this.error = translate(String(error));
+			this.booted = true;
+			return;
+		}
 		this.servers = boot.servers;
 		this.settings = boot.settings;
+		this.applyLanguage();
 		this.session = boot.session;
+		this.unknownServerIcon = boot.unknown_server_icon;
 
-		await onProgress((progress) => (this.progress = progress));
+		// Rust names its phases as dotted keys; anything a library threw stays as it came.
+		await onProgress((progress) => {
+			this.progress = {
+				...progress,
+				phase: translate(progress.phase),
+				detail: translate(progress.detail)
+			};
+		});
 		this.probeAll();
+
+		// both need the network, so neither may hold up the first paint
+		void call<string | null>("player_head").then((head) => (this.playerHead = head));
+		void this.loadVersions();
+		void call<Instance[]>("instances")
+			.then((list) => (this.instances = list))
+			// however it went, the lists are as full as they are going to get - an empty screen
+			// may say so now
+			.finally(() => (this.booted = true));
 	}
 
 	/** Ask about every server at once. A slow one must not hold up the rest of the list. */
@@ -47,7 +105,8 @@ class LauncherState {
 				id: server.id,
 				online: false,
 				error: String(error),
-				motd: "",
+				motd: [],
+				icon: null,
 				players: 0,
 				max_players: 0,
 				manifest: null
@@ -61,28 +120,125 @@ class LauncherState {
 			this.servers = await call<SavedServer[]>("add_server", { name, address });
 			this.probeAll();
 		} catch (error) {
-			this.error = String(error);
+			this.error = translate(String(error));
+		}
+	}
+
+	/**
+	 * Choose a loader for a server that does not run one.
+	 *
+	 * A Vanilla or Paper server announces nothing, so without a choice the instance is plain
+	 * Minecraft and loads no mods. Client-side mods do not need the server to know about them.
+	 */
+	async configure(server: SavedServer, minecraft: string | null, loader: string | null) {
+		this.error = null;
+		try {
+			this.servers = await call<SavedServer[]>("configure", {
+				id: server.id,
+				minecraft,
+				loader
+			});
+			await this.probe(this.servers.find((s) => s.id === server.id) ?? server);
+		} catch (error) {
+			this.error = translate(String(error));
+		}
+	}
+
+	/** Every Minecraft release, for the version picker. Fetched once. */
+	versions = $state<string[]>([]);
+
+	async loadVersions() {
+		if (this.versions.length) return;
+		try {
+			this.versions = await call<string[]>("versions");
+		} catch {
+			this.versions = [];
+		}
+	}
+
+	/** The id of what was just created, so a caller can select it - or null if it failed. */
+	async addInstance(
+		name: string,
+		minecraft: string,
+		loader: string | null,
+		loaderVersion: string | null = null
+	): Promise<string | null> {
+		this.error = null;
+		try {
+			// The command answers with the whole list and appends, so the new one is the last.
+			const list = await call<Instance[]>("add_instance", {
+				name,
+				minecraft,
+				loader,
+				loaderVersion
+			});
+			this.instances = list;
+			return list.at(-1)?.id ?? null;
+		} catch (error) {
+			this.error = translate(String(error));
+			return null;
+		}
+	}
+
+	async removeInstance(id: string) {
+		this.instances = await call<Instance[]>("remove_instance", { id });
+	}
+
+	async playInstance(instance: Instance) {
+		if (this.playing) return;
+		this.playing = instance.id;
+		this.error = null;
+		this.progress = { phase: t("progress.prepare"), detail: instance.name, done: 0, total: 0 };
+		try {
+			await call("play_instance", { id: instance.id });
+		} catch (error) {
+			this.error = translate(String(error));
+		} finally {
+			this.playing = null;
+			this.progress = null;
+		}
+	}
+
+	/** The server whose profile question is open, if one is. */
+	choosing = $state<SavedServer | null>(null);
+
+	/**
+	 * Ask before starting, unless the server has already answered.
+	 *
+	 * A server that publishes a pack has decided what runs, and a dialog there would only ask
+	 * the player to confirm the one possible answer. A server that publishes none - vanilla,
+	 * Paper, anything without the mod - decides nothing, so the question has to be asked even
+	 * when no instance fits yet: creating one is reachable from that dialog and nowhere else.
+	 */
+	askThenPlay(server: SavedServer) {
+		if (this.playing) return;
+		const manifest = this.status[server.id]?.manifest;
+		if (manifest && manifest.mods.length > 0) {
+			void this.play(server);
+			return;
+		}
+		this.choosing = server;
+	}
+
+	async play(server: SavedServer, instance: string | null = null) {
+		if (this.playing) return;
+		this.choosing = null;
+		this.playing = server.id;
+		this.error = null;
+		this.progress = { phase: t("progress.prepare"), detail: server.name, done: 0, total: 0 };
+		try {
+			await call("play", { address: server.address, instance });
+		} catch (error) {
+			this.error = translate(String(error));
+		} finally {
+			this.playing = null;
+			this.progress = null;
 		}
 	}
 
 	async remove(id: string) {
 		this.servers = await call<SavedServer[]>("remove_server", { id });
 		delete this.status[id];
-	}
-
-	async play(server: SavedServer) {
-		if (this.playing) return;
-		this.playing = server.id;
-		this.error = null;
-		this.progress = { phase: "Wird vorbereitet", detail: server.address, done: 0, total: 0 };
-		try {
-			await call("play", { address: server.address });
-		} catch (error) {
-			this.error = String(error);
-		} finally {
-			this.playing = null;
-			this.progress = null;
-		}
 	}
 
 	/** The mod browser, for one server at a time. */
@@ -92,6 +248,17 @@ class LauncherState {
 	picked = $state<Set<string>>(new Set());
 	loadingMods = $state(false);
 	note = $state("");
+
+	/** The mod browser works against a server or an instance; both name an address to ask. */
+	openInstanceMods(instance: Instance) {
+		this.openMods({
+			id: instance.id,
+			name: instance.name,
+			address: `instance-${instance.id}`,
+			loader: instance.loader,
+			minecraft: instance.minecraft
+		});
+	}
 
 	openMods(server: SavedServer) {
 		this.browsing = server;
@@ -143,12 +310,12 @@ class LauncherState {
 			this.hits = append ? [...this.hits, ...hits] : hits;
 
 			if (this.hits.length === 0) {
-				this.note = this.tab === "installed" ? "Noch nichts eigenes" : "Nichts gefunden";
+				this.note = t(this.tab === "installed" ? "mods.nothingOwn" : "mods.notFound");
 			}
 		} catch (error) {
 			if (mine !== this.#request) return;
 			if (!append) this.hits = [];
-			this.note = String(error);
+			this.note = translate(String(error));
 		} finally {
 			if (mine === this.#request) this.loadingMods = false;
 		}
@@ -174,18 +341,24 @@ class LauncherState {
 					address: this.browsing.address,
 					names: ids
 				});
-				this.note = `${gone.length} entfernt`;
+				this.note =
+					gone.length > 0 ? t("mods.removedCount", { count: gone.length }) : t("mods.removedNone");
 			} else {
 				const added = await call<string[]>("install_mods", {
 					address: this.browsing.address,
 					ids
 				});
-				this.note = `${added.length} installiert, liegt in deinem Profil`;
+				// zero is not success: the catalogue had nothing for this version and said so by
+				// handing back an empty list
+				this.note =
+					added.length > 0
+						? t("mods.installedCount", { count: added.length })
+						: t("mods.installedNone");
 			}
 			this.picked = new Set();
 			await this.loadMods("");
 		} catch (error) {
-			this.note = String(error);
+			this.note = translate(String(error));
 		} finally {
 			this.loadingMods = false;
 		}
@@ -193,6 +366,12 @@ class LauncherState {
 
 	async saveSettings(next: Settings) {
 		this.settings = await call<Settings>("save_settings", { settings: next });
+		this.applyLanguage();
+	}
+
+	/** Put the chosen language into effect. Every screen reads it through t(). */
+	applyLanguage() {
+		locale.current = resolveLocale(this.settings.language ?? "system");
 	}
 }
 

@@ -1,23 +1,34 @@
 <script lang="ts">
 	import { Progress } from "$lib/components/ui/progress";
+	import { translate } from "$lib/i18n.svelte";
 	import type { Progress as Job } from "$lib/types";
 
 	let { job }: { job: Job } = $props();
 
 	const fraction = $derived(job.total > 0 ? (job.done / job.total) * 100 : null);
+
+	// Rust names its phases as dotted keys; anything a library threw arrives as English prose.
+	const phase = $derived(translate(job.phase));
+	const detail = $derived(translate(job.detail));
 </script>
 
 <div
 	class="absolute inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm"
 >
-	<div class="w-[340px] rounded-xl border border-border bg-card p-6 shadow-2xl">
-		<p class="text-center text-sm font-medium">{job.phase}</p>
+	<div class="w-[340px] max-w-[calc(100%-2rem)] rounded-xl border border-border bg-card p-6 shadow-2xl">
+		<p class="truncate text-center text-sm font-medium" title={phase}>{phase}</p>
 
 		<div class="mt-4">
 			{#if fraction === null}
-				<!-- No count to show: a bar that sweeps says "working", a bar at zero says "stuck". -->
+				<!--
+					No count to show: a bar that sweeps says "working", a bar at zero says "stuck".
+					motion-reduce fills the track instead - the animation is disabled globally there,
+					and a frozen sweep would leave an empty bar behind.
+				-->
 				<div class="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-					<div class="h-full w-1/3 animate-[sweep_1.4s_ease-in-out_infinite] rounded-full bg-primary"></div>
+					<div
+						class="h-full w-1/3 animate-[sweep_1.4s_ease-in-out_infinite] rounded-full bg-primary motion-reduce:w-full"
+					></div>
 				</div>
 			{:else}
 				<Progress value={fraction} class="h-1.5" />
@@ -25,17 +36,10 @@
 		</div>
 
 		<div class="mt-3 flex items-baseline justify-between gap-3 text-xs text-muted-foreground">
-			<span class="truncate font-mono">{job.detail}</span>
+			<span class="min-w-0 flex-1 truncate font-mono" title={detail}>{detail}</span>
 			{#if job.total > 0}
 				<span class="shrink-0 font-mono">{job.done} / {job.total}</span>
 			{/if}
 		</div>
 	</div>
 </div>
-
-<style>
-	@keyframes sweep {
-		0% { transform: translateX(-100%); }
-		100% { transform: translateX(300%); }
-	}
-</style>

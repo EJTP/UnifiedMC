@@ -10,10 +10,11 @@
 	}: WithElementRef<HTMLAttributes<HTMLDivElement>> = $props();
 </script>
 
+<!-- pr-8: the close button sits in that corner, and a long title may not run under it. -->
 <div
 	bind:this={ref}
 	data-slot="dialog-header"
-	class={cn("gap-2 flex flex-col", className)}
+	class={cn("gap-2 flex flex-col pr-8", className)}
 	{...restProps}
 >
 	{@render children?.()}
