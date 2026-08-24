@@ -153,9 +153,12 @@ offline profile and can only reach offline-mode servers.
 
 ## Development
 
-    ./server/build.sh                     server mod
-    cd hub && gradle build                client mod, needs JDK 21
     ./unifiedmc.py demo                   self-check, no network
+    cd launcher && pnpm check             the desktop app
+
+The server mod lives in its own repository, github.com/EJTP/UnifiedMC-Server. The client
+mod described above is not in this repository either; point UNIFIEDMC_HUB_MOD at a built
+jar to use the launcher-free route.
 
 ---
 

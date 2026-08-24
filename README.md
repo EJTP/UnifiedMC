@@ -86,7 +86,6 @@ them.
 | | |
 |---|---|
 | `launcher/` | The desktop app. Tauri, Svelte, Rust — one binary, no Python needed. |
-| `hub/` | Client mod. A server list inside Minecraft, for the launcher-free route. |
 | `unifiedmc.py` | The original shell. Still the reference for how everything behaves. |
 | `docs/` | [Reference](docs/reference.md) and the [remote-control rules](docs/remote-control.md). |
 | `brand/` | The mark, and the script that renders it. |

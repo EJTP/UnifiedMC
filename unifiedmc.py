@@ -63,8 +63,9 @@ REDIRECT_PORT = int(os.environ.get("UNIFIEDMC_REDIRECT_PORT", "8398"))
 REDIRECT_URI = f"http://localhost:{REDIRECT_PORT}"
 
 HUB_VERSION = os.environ.get("UNIFIEDMC_HUB_VERSION", "1.21.11")
-HUB_MOD = Path(os.environ.get("UNIFIEDMC_HUB_MOD",
-                              Path(__file__).parent / "hub/build/libs/unifiedmc-hub-0.1.0.jar"))
+# The client mod is not in this repository. Point UNIFIEDMC_HUB_MOD at a built jar to take
+# the launcher-free route; every other path here works without it.
+HUB_MOD = Path(os.environ.get("UNIFIEDMC_HUB_MOD", DATA / "unifiedmc-hub.jar"))
 
 
 # --- minecraft server list ping (stdlib only) -------------------------------
@@ -358,7 +359,8 @@ def hub_mods(mc_version: str) -> list[dict]:
     instead - it relaunches the hub when the player leaves a server.
     """
     if not HUB_MOD.is_file():
-        raise FileNotFoundError(f"hub mod not built: {HUB_MOD} (run gradle build in hub/)")
+        raise FileNotFoundError(
+            f"no hub mod at {HUB_MOD} - set UNIFIEDMC_HUB_MOD to a built jar")
     return [blob_of(HUB_MOD),
             modrinth_jar("fabric-api", mc_version),
             modrinth_jar("owo-lib", mc_version)]   # the screens are built on owo-ui
