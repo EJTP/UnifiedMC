@@ -1,0 +1,157 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Dark only. This is a launcher: it sits in front of a game, usually at night,
+ * and a light theme would be the exception nobody asked for.
+ *
+ * Background is #0F0F23 rather than pure black - on OLED, pure black smears
+ * during motion, and every panel above it would need a border to be visible.
+ */
+:root {
+  --background: #0f0f23;
+  --foreground: #e2e8f0;
+
+  /* Two lifts above the background, so depth reads without drawing borders */
+  --card: #16162b;
+  --card-foreground: #e2e8f0;
+  --popover: #1a1a33;
+  --popover-foreground: #e2e8f0;
+
+  --primary: #7c3aed;
+  --primary-foreground: #ffffff;
+
+  --secondary: #27273b;
+  --secondary-foreground: #e2e8f0;
+
+  --muted: #22223a;
+  --muted-foreground: #8b8ba7;
+
+  /* shadcn's "accent" is a hover surface, not a call to action - see --cta */
+  --accent: #2a2a44;
+  --accent-foreground: #f1f5f9;
+
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+
+  /*
+   * The design system proposes #4C1D95 for borders. That is a saturated violet:
+   * fine for one emphasised edge, exhausting on every card. Neutral by default,
+   * violet reserved for focus and selection.
+   */
+  --border: #262640;
+  --input: #262640;
+  --ring: #7c3aed;
+
+  /* The single rose action colour. One per screen, or it stops meaning anything. */
+  --cta: #f43f5e;
+  --cta-foreground: #ffffff;
+
+  /* Server and job states, shared with the progress bar */
+  --ok: #63d18a;
+  --warn: #e8b84c;
+  --bad: #e8685c;
+
+  --radius: 0.625rem;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-cta: var(--cta);
+  --color-cta-foreground: var(--cta-foreground);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html,
+  body {
+    height: 100%;
+    /* A desktop window is not a document; it should not rubber-band or scroll as one. */
+    overflow: hidden;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    /* Inter reads better in dark UI with slightly tighter tracking */
+    letter-spacing: -0.011em;
+  }
+
+  /* Nothing in a launcher chrome is selectable text; inputs and content opt back in. */
+  body {
+    user-select: none;
+    cursor: default;
+  }
+
+  input,
+  textarea,
+  [data-selectable] {
+    user-select: text;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--muted-foreground);
+    background-clip: content-box;
+  }
+}
+
+/* Anyone who asked their system to calm down gets a calm launcher. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
