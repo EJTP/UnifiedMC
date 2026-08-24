@@ -16,6 +16,21 @@ pub struct SavedServer {
     pub name: String,
     /// As the player typed it. Resolved to host and port only when we connect.
     pub address: String,
+
+    /// What the player chose to run here.
+    ///
+    /// A Paper or Vanilla server announces no loader, so without this the instance would be
+    /// plain Minecraft and could load nothing. A client-side mod does not need the server to
+    /// know about it, so the choice is the player's.
+    #[serde(default)]
+    pub loader: Option<String>,
+
+    /// Which Minecraft to run, when the player wants something other than what was detected.
+    ///
+    /// A proxy answers with the oldest protocol it accepts - Hypixel says 1.8.9 while happily
+    /// taking 1.21 - so detection alone would pin every player to the oldest option.
+    #[serde(default)]
+    pub minecraft: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -62,8 +77,12 @@ pub struct ServerStatus {
     pub online: bool,
     #[serde(default)]
     pub error: Option<String>,
+    /// Already split into styled runs, so the window draws it the way the game would.
     #[serde(default)]
-    pub motd: String,
+    pub motd: Vec<crate::motd::Span>,
+    /// The server's own icon, already a data: URI - Minecraft sends it as one.
+    #[serde(default)]
+    pub icon: Option<String>,
     #[serde(default)]
     pub players: u32,
     #[serde(default)]
@@ -133,12 +152,56 @@ fn packet(id: u8, payload: &[u8]) -> Vec<u8> {
 }
 
 /// The vanilla status ping. Returns the server's own JSON.
-pub async fn ping(host: &str, port: u16) -> Result<serde_json::Value> {
-    let stream = tokio::time::timeout(Duration::from_secs(5), TcpStream::connect((host, port)))
+/// Where a server actually listens.
+///
+/// Most public addresses are a SRV record pointing elsewhere: hypixel.net answers nothing on
+/// 25565, its record sends you to mc.hypixel.net. Minecraft resolves these, so anyone typing
+/// an address expects it to work. Only for the default port - naming a port means that port.
+async fn resolve_srv(host: &str, port: u16) -> Option<(String, u16)> {
+    if port != 25565 {
+        return None;
+    }
+    // both the builder and build() can fail on a system with no usable resolver config
+    let resolver = hickory_resolver::TokioResolver::builder_tokio()
+        .ok()?
+        .build()
+        .ok()?;
+    let answer = resolver
+        .srv_lookup(format!("_minecraft._tcp.{host}."))
         .await
-        .context("connection timed out")??;
+        .ok()?;
+
+    // lowest priority wins, highest weight breaks the tie - RFC 2782
+    let best = answer
+        .answers()
+        .iter()
+        .filter_map(|record| match &record.data {
+            hickory_resolver::proto::rr::RData::SRV(srv) => Some(srv),
+            _ => None,
+        })
+        .min_by_key(|srv| (srv.priority, std::cmp::Reverse(srv.weight)))?;
+    Some((
+        best.target.to_string().trim_end_matches('.').to_string(),
+        best.port,
+    ))
+}
+
+pub async fn ping(host: &str, port: u16) -> Result<serde_json::Value> {
+    let (connect_host, connect_port) = match resolve_srv(host, port).await {
+        Some(target) => target,
+        None => (host.to_string(), port),
+    };
+
+    let stream = tokio::time::timeout(
+        Duration::from_secs(5),
+        TcpStream::connect((connect_host.as_str(), connect_port)),
+    )
+    .await
+    .context("connection timed out")??;
     let mut stream = stream;
 
+    // the handshake carries the name the player typed, not where SRV sent us: servers use it
+    // for virtual hosting, and rewriting it would reach the wrong one
     let mut handshake = Vec::new();
     write_varint(&mut handshake, 0); // protocol 0: we are only asking
     write_varint(&mut handshake, host.len() as u32);
@@ -195,25 +258,38 @@ pub async fn manifest(
     manifest_port: u16,
     status: &serde_json::Value,
 ) -> Option<Manifest> {
-    let base = format!("http://{host}:{manifest_port}/");
+    // The game port first: the server mod answers HTTP there too, so a player needs to know
+    // nothing but the address they already typed. Hosting that hands out one port is the
+    // normal case, not the exception, and a second port was never something to ask for.
+    let mut candidates = vec![port];
+    if manifest_port != 0 && manifest_port != port {
+        candidates.push(manifest_port);
+    }
 
-    if let Some(embedded) = status.get("unifiedmc") {
-        if let Ok(mut parsed) = serde_json::from_value::<Manifest>(embedded.clone()) {
+    for candidate in candidates {
+        let base = format!("http://{host}:{candidate}/");
+
+        if let Some(embedded) = status.get("unifiedmc") {
+            if let Ok(mut parsed) = serde_json::from_value::<Manifest>(embedded.clone()) {
+                resolve_urls(&mut parsed, &base);
+                return Some(parsed);
+            }
+        }
+
+        let Ok(response) = client
+            .get(format!("{base}unifiedmc.json"))
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await
+        else {
+            continue;
+        };
+        if let Ok(mut parsed) = response.json::<Manifest>().await {
             resolve_urls(&mut parsed, &base);
             return Some(parsed);
         }
     }
-
-    let response = client
-        .get(format!("{base}unifiedmc.json"))
-        .timeout(Duration::from_secs(5))
-        .send()
-        .await
-        .ok()?;
-    let mut parsed: Manifest = response.json().await.ok()?;
-    resolve_urls(&mut parsed, &base);
-    let _ = port;
-    Some(parsed)
+    None
 }
 
 /// The server publishes paths, not urls: it has no idea which hostname, port forward or
@@ -228,6 +304,91 @@ fn resolve_urls(manifest: &mut Manifest, base: &str) {
         if entry.url.starts_with('/') {
             entry.url = format!("{}{}", base.trim_end_matches('/'), entry.url);
         }
+    }
+}
+
+/// What Minecraft the server runs, from the ping.
+///
+/// version.name is free text - "We support: 1.20-1.21" is a real answer - so only the protocol
+/// number is worth reading. A modded server states its version in the manifest instead.
+pub async fn minecraft_version(
+    client: &reqwest::Client,
+    status: &serde_json::Value,
+) -> anyhow::Result<String> {
+    let version = status
+        .get("version")
+        .ok_or_else(|| anyhow!("the server sent no version block"))?;
+
+    // version.name is free text - Hypixel answers "Requires MC 1.8 / 1.21" - so parsing it
+    // produces nonsense. The protocol number is the only part that means something.
+    let protocol = version
+        .get("protocol")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| anyhow!("the server sent no protocol number"))?;
+
+    let table = protocol_table(client).await?;
+    table
+        .get(&protocol)
+        .cloned()
+        .ok_or_else(|| anyhow!("no Minecraft release uses protocol {protocol}"))
+}
+
+const PROTOCOL_URL: &str = "https://raw.githubusercontent.com/PrismarineJS/minecraft-data/\
+                            master/data/pc/common/protocolVersions.json";
+
+/// protocol number -> release version, cached on disk.
+///
+/// A proxy reports the oldest protocol it accepts, which it accepts by definition - so a
+/// ViaVersion server resolves to something old and still connects.
+async fn protocol_table(
+    client: &reqwest::Client,
+) -> anyhow::Result<std::collections::HashMap<u64, String>> {
+    let cache = paths::data().join("protocolVersions.json");
+    let raw = match std::fs::read_to_string(&cache) {
+        Ok(cached) => cached,
+        Err(_) => {
+            let fetched = client.get(PROTOCOL_URL).send().await?.text().await?;
+            if let Some(parent) = cache.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let _ = std::fs::write(&cache, &fetched);
+            fetched
+        }
+    };
+
+    let entries: Vec<serde_json::Value> = serde_json::from_str(&raw)?;
+    let mut table = std::collections::HashMap::new();
+    for entry in entries {
+        // the file is newest first; keep the first release seen so 772 is 1.21.8, not 1.21.7
+        let is_release = entry
+            .get("releaseType")
+            .and_then(|v| v.as_str())
+            .map(|kind| kind == "release")
+            .unwrap_or(true);
+        if !is_release {
+            continue;
+        }
+        let (Some(protocol), Some(name)) = (
+            entry.get("version").and_then(|v| v.as_u64()),
+            entry.get("minecraftVersion").and_then(|v| v.as_str()),
+        ) else {
+            continue;
+        };
+        table.entry(protocol).or_insert_with(|| name.to_string());
+    }
+    Ok(table)
+}
+
+/// A manifest for a server that publishes none: whatever the player chose to run against it.
+///
+/// Nothing is downloaded from the server here, because there is nothing to download - the
+/// mods come from the player's own profile.
+pub fn manifest_for_choice(minecraft: String, loader: Option<Loader>) -> Manifest {
+    Manifest {
+        minecraft,
+        loader,
+        mods: Vec::new(),
+        config: Vec::new(),
     }
 }
 
@@ -298,5 +459,20 @@ mod tests {
         };
         resolve_urls(&mut manifest, "http://1.2.3.4:25673/");
         assert_eq!(manifest.mods[0].url, "http://1.2.3.4:25673/mods/x");
+    }
+
+    #[tokio::test]
+    async fn an_explicit_port_is_never_second_guessed() {
+        // naming a port means that port; a SRV record answers "wherever this domain plays"
+        assert!(resolve_srv("hypixel.net", 25577).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_public_address_resolves_to_where_it_actually_listens() {
+        // hypixel.net answers nothing on 25565; its record points at mc.hypixel.net
+        if let Some((host, port)) = resolve_srv("hypixel.net", 25565).await {
+            assert!(host.contains("hypixel"), "unexpected target: {host}");
+            assert!(port > 0);
+        } // no network in CI is not a failure
     }
 }

@@ -1,11 +1,18 @@
 [package]
 name = "launcher"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "A launcher for one modded Minecraft server"
+authors = ["EJTP"]
+license = "MIT"
 edition = "2021"
+# two binaries now, so tauri has to be told which one is the app
+default-run = "launcher"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[[bin]]
+name = "launcher"
+path = "src/main.rs"
 
 [[bin]]
 # The server-side companion. Shares the pack reader and catalogue with the launcher,
@@ -41,4 +48,7 @@ base64 = "0.23.1"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 clap = { version = "4.6.6", features = ["derive", "env"] }
 bytes = "1.12.1"
+toml = "1.1.4"
+hickory-resolver = "0.26.1"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
 

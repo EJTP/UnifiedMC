@@ -147,14 +147,18 @@ def fetch_manifest(host: str, port: int, status: dict) -> dict:
       3. ~/.unifiedmc/manifests/<host>_<port>.json - hand written, for servers not running it yet
     None of them -> vanilla server, nothing to sync.
     """
-    base = f"http://{host}:{MANIFEST_PORT}/"
-    if isinstance(status.get("unifiedmc"), dict):
-        return normalize(status["unifiedmc"], status, base=base)
-    try:
-        with urllib.request.urlopen(base + "unifiedmc.json", timeout=5) as r:
-            return normalize(json.load(r), status, base=base)
-    except Exception:
-        pass
+    # The game port first: the server mod answers HTTP there as well, so nobody has to know
+    # about a second one. The configured port stays as a way out for anyone behind a proxy
+    # that will not pass what it does not recognise.
+    for candidate in dict.fromkeys([port, MANIFEST_PORT]):
+        base = f"http://{host}:{candidate}/"
+        if isinstance(status.get("unifiedmc"), dict):
+            return normalize(status["unifiedmc"], status, base=base)
+        try:
+            with urllib.request.urlopen(base + "unifiedmc.json", timeout=5) as r:
+                return normalize(json.load(r), status, base=base)
+        except Exception:
+            continue
     local = MANIFESTS / f"{host}_{port}.json"
     if local.is_file():
         return normalize(json.loads(local.read_text()), status)

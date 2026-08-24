@@ -77,20 +77,41 @@ fn auth_for(session: &Session) -> AuthMethod {
     }
 }
 
-/// Bring an instance in line with the manifest and start it on the given server.
+/// The arguments that send the game straight into a server.
+///
+/// Only an address belongs here. An instance key is a directory name, and handing that to
+/// --quickPlayMultiplayer asks the client to connect to a folder.
+fn quick_play(join: Option<&str>) -> Vec<String> {
+    match join {
+        Some(address) => vec!["--quickPlayMultiplayer".into(), address.into()],
+        None => Vec::new(),
+    }
+}
+
+/// Bring an instance in line with the manifest and start it.
+///
+/// `key` names the instance directory and the profile the player's own mods live in; `join` is
+/// the server to connect to on start, or none to land in Minecraft's own menu. They are not the
+/// same string: joining a server with a personal instance uses that instance's key and the
+/// server's address at once.
 pub async fn run(
     app: AppHandle,
     client: reqwest::Client,
-    address: String,
+    key: String,
+    join: Option<String>,
     manifest: Manifest,
     settings: Settings,
     session: Session,
 ) -> Result<()> {
-    let key = crate::servers::instance_key(&address, &manifest);
     let instance = paths::instance(&key);
     std::fs::create_dir_all(&instance)?;
 
-    report(&app, "Mods werden abgeglichen", "", 0, 0);
+    // Nobody wants to set their keybindings up again because they joined a different server.
+    if let Err(error) = crate::options::apply(&instance) {
+        eprintln!("could not apply shared settings: {error}");
+    }
+
+    report(&app, "progress.mods.sync", "", 0, 0);
     let mods_dir = instance.join("mods");
     let synced = {
         let app = app.clone();
@@ -99,25 +120,27 @@ pub async fn run(
             &manifest.mods,
             &mods_dir,
             move |done, total, name| {
-                report(&app, "Mods werden geladen", name, done as u64, total as u64);
+                report(
+                    &app,
+                    "progress.mods.download",
+                    name,
+                    done as u64,
+                    total as u64,
+                );
             },
         )
         .await?
     };
     report(
         &app,
-        "Mods",
-        &format!(
-            "{} vorhanden, {} geladen",
-            synced.total - synced.downloaded,
-            synced.downloaded
-        ),
-        0,
-        0,
+        "progress.mods.summary",
+        &format!("{} / {}", synced.downloaded, synced.total),
+        synced.downloaded as u64,
+        synced.total as u64,
     );
 
     if !manifest.config.is_empty() {
-        report(&app, "Konfiguration", "", 0, 0);
+        report(&app, "progress.config", "", 0, 0);
         sync::config(&client, &manifest.config, &instance).await?;
     }
 
@@ -129,10 +152,11 @@ pub async fn run(
     }
 
     let memory = crate::settings::heap_mb(settings.memory, manifest.mods.len());
+    let jvm = crate::settings::jvm_args(&settings, memory);
     report(
         &app,
-        &format!("Minecraft {}", manifest.minecraft),
-        &format!("{memory} MB"),
+        "progress.java",
+        &format!("{} · {memory} MB", manifest.minecraft),
         0,
         0,
     );
@@ -148,7 +172,15 @@ pub async fn run(
                         .file_name()
                         .map(|n| n.to_string_lossy().into_owned())
                         .unwrap_or(path);
-                    report(&app, &format!("{kind} werden geladen"), &name, done, total);
+                    // the kind comes out of lyceris in English; it belongs in the detail, which
+                    // the window shows as it is
+                    report(
+                        &app,
+                        "progress.download",
+                        &format!("{kind}: {name}"),
+                        done,
+                        total,
+                    );
                 },
             )
             .await;
@@ -160,26 +192,50 @@ pub async fn run(
         auth_for(&session),
     )
     .memory(Memory::Megabyte(memory))
+    .custom_java_args(jvm)
     .profile(Profile {
         name: key.clone(),
         root: paths::instances(),
     })
-    .custom_args(vec!["--quickPlayMultiplayer".into(), address.clone()]);
+    .custom_args(quick_play(join.as_deref()));
 
     match loader_for(&manifest)? {
         Some(loader) => {
             let config = builder.loader(loader).build();
             install(&config, Some(&emitter)).await?;
-            report(&app, "Minecraft startet", &manifest.minecraft, 0, 0);
-            launch(&config, Some(&emitter)).await?;
+            report(&app, "progress.launch", &manifest.minecraft, 0, 0);
+            let mut child = launch(&config, Some(&emitter)).await?;
+            child.wait().await?;
         }
         None => {
             let config = builder.build();
             install(&config, Some(&emitter)).await?;
-            report(&app, "Minecraft startet", &manifest.minecraft, 0, 0);
-            launch(&config, Some(&emitter)).await?;
+            report(&app, "progress.launch", &manifest.minecraft, 0, 0);
+            let mut child = launch(&config, Some(&emitter)).await?;
+            child.wait().await?;
         }
     }
 
+    // Whatever the player changed in game goes back to the shared file, so the next instance
+    // starts where this one left off.
+    if let Err(error) = crate::options::collect(&instance) {
+        eprintln!("could not save shared settings: {error}");
+    }
+
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_server_address_is_ever_joined() {
+        // an instance started on its own lands in the menu, not on a server named after a folder
+        assert!(quick_play(None).is_empty());
+        assert_eq!(
+            quick_play(Some("mc.example.com:25565")),
+            vec!["--quickPlayMultiplayer", "mc.example.com:25565"]
+        );
+    }
 }

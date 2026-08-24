@@ -33,6 +33,9 @@ pub struct Hit {
     /// The server already sends this one. Shown, not hidden - hiding it does not answer the
     /// question somebody has when they type "sodium".
     pub on_server: bool,
+    /// The player already put this in their own profile. Offering it again is a lie.
+    #[serde(default)]
+    pub installed: bool,
     pub icon: Option<String>,
 }
 
@@ -383,6 +386,7 @@ impl Catalogue<'_> {
                     downloads: hit.get("downloads").and_then(|v| v.as_u64()).unwrap_or(0),
                     source: "modrinth".into(),
                     on_server,
+                    installed: false,
                     icon: hit
                         .get("icon_url")
                         .and_then(|v| v.as_str())
@@ -481,6 +485,7 @@ impl Catalogue<'_> {
                     .unwrap_or(0),
                 source: "curseforge".into(),
                 on_server,
+                installed: false,
                 icon: hit
                     .get("logo")
                     .and_then(|l| l.get("thumbnailUrl"))

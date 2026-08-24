@@ -80,7 +80,24 @@ def render(style, plate=True, accent=True):
 
 STYLE = "panel"
 
+# A stand-in for a server that ships no icon. Minecraft's own unknown_server.png is Mojang's,
+# so this is the same block drawn in grey - it belongs to the launcher and reads as "no icon"
+# rather than as a broken image.
+PLACEHOLDER_BASE = (90, 90, 110)
+
+def render_placeholder():
+    global BASE
+    was, BASE = BASE, PLACEHOLDER_BASE
+    try:
+        return render(STYLE, plate=False, accent=False)
+    finally:
+        BASE = was
+
+
 if __name__ == "__main__":
+    placeholder = render_placeholder()
+    placeholder.resize((128, 128), Image.LANCZOS).save("brand/server-placeholder.png")
+
     render(STYLE, plate=True, accent=False).save("brand/icon.png")
     mark = render(STYLE, plate=False, accent=False)
     mark.save("brand/mark.png")
