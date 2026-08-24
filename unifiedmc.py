@@ -176,9 +176,19 @@ def protocol_table() -> dict[int, str]:
     if not cache.is_file():
         cache.parent.mkdir(parents=True, exist_ok=True)
         with urllib.request.urlopen(PROTOCOL_URL, timeout=15) as response:
-            cache.write_bytes(response.read())
+            body = response.read()
+        # whole file or none of it: a crash midway through the write leaves truncated json that
+        # nothing re-fetches, and every vanilla server stops resolving for good
+        tmp = cache.with_suffix(".part")
+        tmp.write_bytes(body)
+        tmp.rename(cache)
+    try:
+        entries = json.loads(cache.read_text())
+    except ValueError:
+        cache.unlink(missing_ok=True)   # unreadable is not worth keeping; the next call refetches
+        raise
     table: dict[int, str] = {}
-    for entry in json.loads(cache.read_text()):
+    for entry in entries:
         # newest first in the file; keep the first release seen so 772 -> 1.21.8, not 1.21.7
         if entry.get("releaseType", "release") == "release":
             table.setdefault(entry["version"], entry["minecraftVersion"])
@@ -202,12 +212,18 @@ def normalize(m: dict, status: dict, table: dict[int, str] | None = None,
             raise ValueError(f"cannot resolve MC version for protocol {proto}")
     # the server publishes "/mods/<sha1>", not an absolute url: it has no idea which hostname,
     # port forward or proxy the client reached it through, and it does not need to
-    mods = [{**mod, "url": urllib.parse.urljoin(base, mod["url"])} if base and mod.get("url")
-            else mod
-            for mod in m.get("mods", [])]
-    config = [{**item, "url": urllib.parse.urljoin(base, item["url"])} if base and item.get("url")
-              else item
-              for item in m.get("config", [])]
+    # and urljoin() hands back an absolute url unchanged, so without this a manifest can aim
+    # the launcher at anything the player's machine can reach
+    def resolve(entry: dict) -> dict:
+        url = entry.get("url")
+        if not base or not url:
+            return entry
+        if not url.startswith("/"):
+            return {**entry, "url": ""}    # download() refuses an empty url
+        return {**entry, "url": urllib.parse.urljoin(base, url)}
+
+    mods = [resolve(mod) for mod in m.get("mods", [])]
+    config = [resolve(item) for item in m.get("config", [])]
     return {
         "minecraft": version,
         "loader": m.get("loader"),  # {"type": "fabric"|"neoforge", "version": "..."} or None
@@ -226,28 +242,67 @@ def sha1_file(p: Path) -> str:
     return h.hexdigest()
 
 
+# Every string in a manifest was written by whoever answered on that port, and "/" in Python
+# means the same thing it means in a shell: BLOBS / "../../.ssh/id_rsa" is $HOME/.ssh/id_rsa,
+# and Path("mods") / "/etc/passwd" is /etc/passwd. These three say what a manifest may name.
+
+def is_hash(sha1: str) -> bool:
+    """A blob store filename. Lowercase, because that is all hexdigest() ever produces."""
+    return len(sha1) == 40 and all(c in "0123456789abcdef" for c in sha1)
+
+
+def plain_name(name: str) -> bool:
+    """A name that addresses a file in a directory we chose. Never one that builds a path."""
+    return bool(name) and name not in (".", "..") and "/" not in name and "\\" not in name
+
+
+def plain_relative(path: str) -> bool:
+    """A relative path that stays inside a directory we chose."""
+    parts = Path(path).parts
+    return bool(parts) and not Path(path).is_absolute() and all(
+        part not in ("..", ".") and "/" not in part and "\\" not in part for part in parts)
+
+
+def blob(sha1: str) -> Path:
+    """A blob is addressed by its hash. A sha1 that is not one addresses nothing."""
+    if not is_hash(sha1):
+        raise ValueError(f"not a sha1: {sha1!r}")
+    return BLOBS / sha1
+
+
 def have(sha1: str) -> bool:
-    return (BLOBS / sha1).is_file()
+    # The hash check lives in download(). A sha1 that is not a hash must never look present
+    # here, or the file it points at gets linked into an instance without ever being verified.
+    return is_hash(sha1) and (BLOBS / sha1).is_file()
 
 
 def download(mod: dict) -> None:
     """Fetch into the shared blob store. Verified by hash, so a corrupt file never sticks."""
-    if not mod.get("url"):
+    url = mod.get("url") or ""
+    if not url:
         raise ValueError(f"{mod['name']}: not in the blob store and the manifest gives no url")
-    BLOBS.mkdir(parents=True, exist_ok=True)
-    tmp = BLOBS / f".{mod['sha1']}.part"
-    with urllib.request.urlopen(mod["url"], timeout=60) as r, tmp.open("wb") as f:
-        shutil.copyfileobj(r, f)
-    got = sha1_file(tmp)
+    # urlopen speaks file:// and ftp:// as happily as http, so a manifest url of
+    # "file:///home/player/.ssh/id_rsa" would otherwise copy that file into the blob store
+    if urllib.parse.urlsplit(url).scheme not in ("http", "https"):
+        raise ValueError(f"{mod['name']}: refusing to fetch {url!r}")
+    with urllib.request.urlopen(url, timeout=60) as r:
+        body = r.read()
+    # Hashed in memory and only then written: the temporary name is built out of the manifest's
+    # sha1, so writing first would put attacker-chosen bytes at an attacker-chosen path.
+    got = hashlib.sha1(body).hexdigest()
     if got != mod["sha1"]:
-        tmp.unlink(missing_ok=True)
         raise ValueError(f"{mod['name']}: hash mismatch (got {got}, want {mod['sha1']})")
-    tmp.rename(BLOBS / mod["sha1"])
+    BLOBS.mkdir(parents=True, exist_ok=True)
+    tmp = BLOBS / f".{got}.part"
+    tmp.write_bytes(body)
+    tmp.rename(BLOBS / got)
 
 
 def sync_mods(mods: list[dict], mods_dir: Path) -> dict:
     """Make mods_dir contain exactly `mods`. Returns a small report."""
-    missing = [m for m in mods if not have(m["sha1"])]
+    wanted = {m["name"]: m["sha1"] for m in mods
+              if plain_name(m["name"]) and is_hash(m["sha1"])}
+    missing = [m for m in mods if m["name"] in wanted and not have(m["sha1"])]
     if missing:
         done = 0
         progress("Mods werden geladen", f"{len(missing)} fehlen", 0, len(missing))
@@ -262,12 +317,14 @@ def sync_mods(mods: list[dict], mods_dir: Path) -> dict:
             list(pool.map(fetch, missing))
 
     mods_dir.mkdir(parents=True, exist_ok=True)
-    wanted = {m["name"]: m["sha1"] for m in mods}
     for stale in mods_dir.iterdir():                 # server dropped a mod -> so do we
         if stale.name not in wanted:
-            stale.unlink()
+            try:
+                stale.unlink()
+            except OSError:
+                pass                                 # a directory in mods/ is not ours to remove
     for name, sha1 in wanted.items():
-        link(BLOBS / sha1, mods_dir / name)
+        link(blob(sha1), mods_dir / name)
     return {"total": len(mods), "downloaded": len(missing), "cached": len(mods) - len(missing)}
 
 
@@ -297,12 +354,11 @@ def sync_config(entries: list[dict], inst: Path) -> None:
 
     written = kept = 0
     for entry in entries:
-        relative = Path(entry["path"])
-        if relative.is_absolute() or ".." in relative.parts:
+        if not plain_relative(entry["path"]):
             print(f"  refusing config path {entry['path']!r}", file=sys.stderr)
             continue
 
-        target = inst / "config" / relative
+        target = inst / "config" / entry["path"]
         if target.exists():
             current = sha1_file(target)
             if current == entry["sha1"]:
@@ -323,7 +379,7 @@ def sync_config(entries: list[dict], inst: Path) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         # a copy, never a hardlink: this file is meant to be edited, and editing a link would
         # rewrite the shared blob for every other server too
-        shutil.copy2(BLOBS / entry["sha1"], target)
+        shutil.copy2(blob(entry["sha1"]), target)
         delivered[entry["path"]] = entry["sha1"]
         written += 1
 
@@ -399,7 +455,8 @@ def personal_mods(key: str, from_server: list[dict]) -> list[dict]:
         return []
 
     served_hashes = {mod["sha1"] for mod in from_server}
-    served_ids = {found for found in (mod_id(BLOBS / mod["sha1"]) for mod in from_server) if found}
+    served_ids = {found for found in (mod_id(BLOBS / mod["sha1"]) for mod in from_server
+                                     if is_hash(mod["sha1"])) if found}
 
     mine = []
     for jar in jars:
@@ -603,9 +660,9 @@ def served_curseforge(mf: dict) -> set[str]:
     prints = {}
     missing = 0
     for mod in mf["mods"]:
-        blob = BLOBS / mod["sha1"]
-        if blob.is_file():
-            prints[cf_fingerprint(blob)] = mod["sha1"]
+        jar = BLOBS / mod["sha1"] if is_hash(mod["sha1"]) else None
+        if jar is not None and jar.is_file():
+            prints[cf_fingerprint(jar)] = mod["sha1"]
         else:
             missing += 1   # not downloaded yet: this answer is partial, see below
     if not prints:
@@ -838,7 +895,8 @@ def add_to_profile(key: str, mf: dict, slugs: list[str]) -> list[str]:
     served = {mod["sha1"] for mod in mf["mods"]}
     # the catalogue can only hide what it can identify; this is what actually prevents a crash,
     # and it works no matter which site the jar came from
-    served_ids = {found for found in (mod_id(BLOBS / mod["sha1"]) for mod in mf["mods"]) if found}
+    served_ids = {found for found in (mod_id(BLOBS / mod["sha1"]) for mod in mf["mods"]
+                                     if is_hash(mod["sha1"])) if found}
 
     installed = []
     for mod in wanted_with_deps(slugs, mf):
@@ -848,12 +906,15 @@ def add_to_profile(key: str, mf: dict, slugs: list[str]) -> list[str]:
         if not have(mod["sha1"]):
             download(mod)
 
-        declared = mod_id(BLOBS / mod["sha1"])
+        declared = mod_id(blob(mod["sha1"]))
         if declared and declared in served_ids:
             print(f"  {mod['name']}: {declared} is already in the pack")
             continue
 
-        link(BLOBS / mod["sha1"], folder / mod["name"])
+        if not plain_name(mod["name"]):
+            print(f"  refusing {mod['name']!r}", file=sys.stderr)
+            continue
+        link(blob(mod["sha1"]), folder / mod["name"])
         installed.append(mod["name"])
         print(f"  + {mod['name']}")
     return installed
@@ -894,9 +955,21 @@ def heap_mb(mf: dict) -> int:
     return int(min(ceiling, room, 2048 + 12 * len(mf.get("mods", []))))
 
 
+def tame(value: str) -> str:
+    """A directory name, so it stops being a path.
+
+    minecraft and the loader name come out of the manifest, and a version of "../../.." puts the
+    whole instance wherever the server likes. Real versions and loader names contain none of
+    these, so no existing directory changes name.
+    """
+    for bad in ("/", "\\", ":"):
+        value = value.replace(bad, "_")
+    return value.replace("..", "_")
+
+
 def instance_key(host: str, mf: dict) -> str:
-    loader = f"-{mf['loader']['type']}" if mf.get("loader") else ""
-    return f"{host}-{mf['minecraft']}{loader}".replace(":", "_")
+    loader = f"-{tame(mf['loader']['type'])}" if mf.get("loader") else ""
+    return f"{tame(host)}-{tame(mf['minecraft'])}{loader}"
 
 
 def progress(phase: str, detail: str = "", done: int = 0, total: int = 0) -> None:
@@ -1481,8 +1554,46 @@ def demo() -> None:
     except ValueError:
         pass
 
+    # a server publishing a url rather than a path is not one we follow anywhere
+    aimed = normalize({"minecraft": "1.21.1",
+                       "mods": [{"name": "a.jar", "sha1": "x", "url": "http://127.0.0.1:8080/x"}]},
+                      {}, t, base="http://mc.example.com:25566/")
+    assert aimed["mods"][0]["url"] == "", aimed["mods"][0]
+
     mf = {"minecraft": "1.21.11", "loader": {"type": "fabric", "version": "0.19.3"}}
     assert instance_key("mc.example.com", mf) == "mc.example.com-1.21.11-fabric"
+    # a manifest names the instance directory, so it must not be able to name a path
+    hostile_key = instance_key("1.2.3.4:25565",
+                               {"minecraft": "../../../..", "loader": {"type": "../evil"}})
+    assert ".." not in hostile_key and "/" not in hostile_key, hostile_key
+
+    # everything a manifest can say about where a file goes
+    for bad in ("../../../../.bashrc", "/home/player/.bashrc", "..", ".", "", "sub/dir.jar"):
+        assert not plain_name(bad), bad
+    for good in ("sodium.jar", "Xaero's Minimap.jar", "create+extras [1.21].jar", "\u00dcberlauf.jar"):
+        assert plain_name(good), good
+    for bad in ("", "..", "../../.ssh/authorized_keys", "/etc/passwd"):
+        assert not plain_relative(bad), bad
+    assert plain_relative("config/create-common.toml")
+    assert is_hash("da39a3ee5e6b4b0d3255bfef95601890afd80709")
+    assert not is_hash("DA39A3EE5E6B4B0D3255BFEF95601890AFD80709")
+    assert not is_hash("../../.ssh/id_rsa") and not is_hash("")
+    # the one that matters: a traversing sha1 must not look present, or download() - the only
+    # place a hash is ever checked - never runs, and the file it points at gets linked in
+    assert not have("../../.ssh/id_rsa")
+    assert not have("/etc/passwd")
+    try:
+        blob("../../.ssh/id_rsa")
+        raise AssertionError("a traversing sha1 must not address a blob")
+    except ValueError:
+        pass
+    # a url the launcher will not follow, and one it refuses to fetch at all
+    for scheme in ("file:///etc/passwd", "ftp://example.com/x"):
+        try:
+            download({"name": "x.jar", "sha1": "a" * 40, "url": scheme})
+            raise AssertionError("must refuse " + scheme)
+        except ValueError:
+            pass
 
     # sync is idempotent and prunes what the server dropped
     import tempfile

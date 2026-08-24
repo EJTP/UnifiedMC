@@ -24,11 +24,25 @@ export interface Loader {
 	version: string | null;
 }
 
+/** One file the server publishes: a mod, a datapack, a resource pack or a shader. */
+export interface ModEntry {
+	name: string;
+	sha1: string;
+	url: string;
+}
+
+/** The four categories the browser offers, spelled the way the commands expect them. */
+export type Kind = "mod" | "resourcepack" | "shader" | "datapack";
+
 export interface Manifest {
 	minecraft: string;
 	loader: Loader | null;
-	mods: { name: string; sha1: string; url: string }[];
+	mods: ModEntry[];
 	config: { path: string; sha1: string; url: string; force: boolean }[];
+	/** The world's own data, so recipes and loot on the client match what the server runs. */
+	datapacks: ModEntry[];
+	resourcepacks: ModEntry[];
+	shaders: ModEntry[];
 }
 
 export interface ServerStatus {
@@ -57,7 +71,6 @@ export interface Settings {
 export interface Session {
 	name: string;
 	uuid: string;
-	token: string;
 	kind: "microsoft" | "offline";
 }
 
@@ -88,4 +101,11 @@ export interface MotdSpan {
 	underlined?: boolean;
 	strikethrough?: boolean;
 	obfuscated?: boolean;
+}
+
+/** What the player has to do while the sign-in waits for them. */
+export interface SignInPrompt {
+	user_code: string;
+	verification_uri: string;
+	expires_in: number;
 }

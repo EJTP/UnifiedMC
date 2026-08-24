@@ -35,14 +35,17 @@ tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-lyceris = "1.1.3"
+# Pinned: download_necessary() hashes nothing it fetches in the run that fetches it, so what
+# this version does on the wire is a known ceiling rather than a moving one. See play.rs.
+lyceris = "=1.1.3"
 tokio = { version = "1.53.1", features = ["full"] }
 sha1 = "0.11.0"
 hex = "0.4.3"
 anyhow = "1.0.104"
 dirs = "6.0.0"
 futures = "0.3.34"
-reqwest = { version = "0.13.4", features = ["json", "query"] }
+# "form": the Microsoft token endpoints are urlencoded, not JSON, all the way through.
+reqwest = { version = "0.13.4", features = ["json", "query", "form"] }
 md5 = "0.8.1"
 base64 = "0.23.1"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
@@ -51,4 +54,7 @@ bytes = "1.12.1"
 toml = "1.1.4"
 hickory-resolver = "0.26.1"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
+# already in the tree under reqwest; direct because an admin token needs a CSPRNG and std
+# offers none - RandomState is a hash seed, not a source of credentials
+getrandom = "0.3"
 

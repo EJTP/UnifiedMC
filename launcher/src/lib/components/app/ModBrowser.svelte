@@ -2,8 +2,9 @@
 	import { ArrowLeft, Check, Download, Loader2, Package, Trash2 } from "@lucide/svelte";
 	import { Button } from "$lib/components/ui/button";
 	import { Input } from "$lib/components/ui/input";
+	import * as Select from "$lib/components/ui/select";
 	import { t } from "$lib/i18n.svelte";
-	import { launcher, type Tab } from "$lib/state.svelte";
+	import { KINDS, launcher, type Kind, type Tab } from "$lib/state.svelte";
 	import type { Hit } from "$lib/types";
 	import { cn } from "$lib/utils";
 
@@ -23,12 +24,29 @@
 	 * What this tab is showing - plus, in the catalogue, which catalogues are actually in it.
 	 * Without a CurseForge key half the world of mods is silently missing, and a player who is
 	 * not told reads that as "the search is broken".
+	 *
+	 * The "runs without a server side" sentence is about mods only: a resource pack or a shader
+	 * is client-side by definition, so saying it there would sound like a filter that is not there.
 	 */
-	const hint = $derived(
-		t(`mods.hint.${launcher.tab}`) +
-			(launcher.tab === "search" && !launcher.settings.curseforge_key
-				? ` ${t("mods.modrinthOnly")}`
-				: "")
+	const hint = $derived.by(() => {
+		const key =
+			launcher.tab === "search" && launcher.kind !== "mod"
+				? "mods.hint.searchClient"
+				: `mods.hint.${launcher.tab}`;
+		const thin = launcher.tab === "search" && !launcher.settings.curseforge_key;
+		return t(key) + (thin ? ` ${t("mods.modrinthOnly")}` : "");
+	});
+
+	/**
+	 * Rule 4, said out loud. A category the server does not allow is not offered, and a chooser
+	 * that is quietly one item short reads as a bug rather than as the server's decision.
+	 */
+	const restricted = $derived(
+		launcher.allowedKinds.length < KINDS.length
+			? t("mods.restricted", {
+					kinds: launcher.allowedKinds.map((kind) => t(`mods.kind.${kind}`)).join(", ")
+				})
+			: ""
 	);
 
 	/** An instance is browsed through a synthetic "instance-<id>" address nobody should read. */
@@ -48,6 +66,13 @@
 		clearTimeout(timer);
 		query = "";
 		void launcher.switchTab(tab);
+	}
+
+	function switchKind(kind: Kind) {
+		if (kind === launcher.kind) return;
+		clearTimeout(timer);
+		query = "";
+		void launcher.switchKind(kind);
 	}
 
 	function compact(count: number) {
@@ -89,9 +114,13 @@
 		</div>
 	</div>
 
-	<!-- One control, not three buttons: the track carries the group, the thumb the choice. -->
-	<div class="px-6 pt-3">
-		<div class="inline-flex rounded-lg border border-border/70 bg-muted/40 p-0.5">
+	<!--
+		One row, and it may never become two: the strip keeps its width and the category chooser
+		takes what is left, truncating its label rather than pushing itself onto a second line.
+	-->
+	<div class="flex items-center gap-3 px-6 pt-3">
+		<!-- One control, not three buttons: the track carries the group, the thumb the choice. -->
+		<div class="inline-flex shrink-0 rounded-lg border border-border/70 bg-muted/40 p-0.5">
 			{#each tabs as tab (tab.id)}
 				{@const active = launcher.tab === tab.id}
 				<button
@@ -99,7 +128,7 @@
 					aria-pressed={active}
 					onclick={() => switchTab(tab.id)}
 					class={cn(
-						"h-7 rounded-md px-3 text-xs font-medium transition-colors duration-150 outline-none",
+						"h-7 rounded-md px-3 text-xs font-medium whitespace-nowrap transition-colors duration-150 outline-none",
 						"focus-visible:ring-3 focus-visible:ring-ring/50",
 						active
 							? "bg-secondary text-foreground"
@@ -110,10 +139,34 @@
 				</button>
 			{/each}
 		</div>
+
+		<div class="flex-1"></div>
+
+		<!-- Nothing to choose between when the server allows exactly one category. -->
+		{#if launcher.allowedKinds.length > 1}
+			<Select.Root
+				type="single"
+				value={launcher.kind}
+				onValueChange={(value) => switchKind(value as Kind)}
+			>
+				<Select.Trigger class="h-8 w-44 text-xs" aria-label={t("mods.kindLabel")}>
+					<span>{t(`mods.kind.${launcher.kind}`)}</span>
+				</Select.Trigger>
+				<Select.Content>
+					{#each launcher.allowedKinds as kind (kind)}
+						<Select.Item value={kind} label={t(`mods.kind.${kind}`)} />
+					{/each}
+				</Select.Content>
+			</Select.Root>
+		{/if}
 	</div>
 
 	<!-- clamped, not truncated: the second sentence is the one that explains a thin catalogue -->
 	<p class="line-clamp-2 px-6 pt-2.5 text-xs text-muted-foreground" title={hint}>{hint}</p>
+
+	{#if restricted}
+		<p class="line-clamp-2 px-6 pt-1 text-xs text-warn" title={restricted}>{restricted}</p>
+	{/if}
 
 	{#if launcher.tab === "search"}
 		<div class="px-6 pt-3">

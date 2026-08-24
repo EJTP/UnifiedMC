@@ -112,13 +112,12 @@ pub async fn run(
     }
 
     report(&app, "progress.mods.sync", "", 0, 0);
-    let mods_dir = instance.join("mods");
     let synced = {
         let app = app.clone();
-        sync::mods(
+        sync::into_dir(
             &client,
             &manifest.mods,
-            &mods_dir,
+            &instance.join("mods"),
             move |done, total, name| {
                 report(
                     &app,
@@ -139,15 +138,53 @@ pub async fn run(
         synced.total as u64,
     );
 
+    // The rest of what the pack ships: the same job in a different directory.
+    //
+    // Only when the server actually publishes some. mods/ is the launcher's to fill, so an
+    // empty list there really does mean "no mods" - but resourcepacks/ and shaderpacks/ are
+    // where Minecraft itself puts whatever somebody dragged in, and reconciling an empty list
+    // against those would quietly delete every pack the player added by hand.
+    for (dir, phase) in [
+        ("resourcepacks", "progress.resourcepacks"),
+        ("shaderpacks", "progress.shaders"),
+        ("datapacks", "progress.datapacks"),
+    ] {
+        let entries = manifest.entries(dir);
+        if entries.is_empty() {
+            continue;
+        }
+        report(&app, phase, "", 0, entries.len() as u64);
+        let app = app.clone();
+        sync::into_dir(
+            &client,
+            entries,
+            &instance.join(dir),
+            move |done, total, name| {
+                report(&app, phase, name, done as u64, total as u64);
+            },
+        )
+        .await?;
+    }
+
     if !manifest.config.is_empty() {
         report(&app, "progress.config", "", 0, 0);
         sync::config(&client, &manifest.config, &instance).await?;
     }
 
-    // the player's own jars go in alongside, unless the server already ships them
-    for jar in sync::personal(&manifest.mods, &paths::profiles().join(&key)) {
-        if let Some(name) = jar.file_name() {
-            let _ = std::fs::copy(&jar, mods_dir.join(name));
+    // the player's own files go in alongside, unless the server already ships them
+    let profile = paths::profiles().join(&key);
+    for kind in crate::catalogue::KINDS {
+        let dir = kind.dir();
+        let mine = sync::personal(manifest.entries(dir), &profile.join(dir));
+        if mine.is_empty() {
+            continue;
+        }
+        let target = instance.join(dir);
+        let _ = std::fs::create_dir_all(&target);
+        for file in mine {
+            if let Some(name) = file.file_name() {
+                let _ = std::fs::copy(&file, target.join(name));
+            }
         }
     }
 
@@ -199,6 +236,12 @@ pub async fn run(
     })
     .custom_args(quick_play(join.as_deref()));
 
+    // ponytail: lyceris' own downloads are a ceiling we cannot close from here. install() uses
+    // each sha1 only to decide WHETHER to fetch, never to check what arrived, so anything
+    // downloaded in a run is on the classpath that same run unverified - and loader libraries
+    // whose metadata carries no hash are never verified on any run. Everything is https, so the
+    // attacker has to be the upstream host. Fixing it means a patched lyceris; the version is
+    // pinned in Cargo.toml so the behaviour cannot change without someone choosing it.
     match loader_for(&manifest)? {
         Some(loader) => {
             let config = builder.loader(loader).build();

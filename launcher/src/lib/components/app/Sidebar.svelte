@@ -1,10 +1,16 @@
 <script lang="ts">
-	import { Boxes, Server, Settings } from "@lucide/svelte";
+	import { Boxes, Loader2, LogIn, Server, Settings } from "@lucide/svelte";
+	import { Button } from "$lib/components/ui/button";
+	import SkinDialog from "./SkinDialog.svelte";
+	import SignInDialog from "./SignInDialog.svelte";
 	import { t } from "$lib/i18n.svelte";
 	import { launcher, type View } from "$lib/state.svelte";
 	import { cn } from "$lib/utils";
 
 	let { onsettings }: { onsettings: () => void } = $props();
+
+	/** The account block owns the skin, so the dialog lives here rather than in the page. */
+	let skinOpen = $state(false);
 
 	const items: { id: View; key: string; icon: typeof Server; count: () => number }[] = [
 		{ id: "servers", key: "nav.servers", icon: Server, count: () => launcher.servers.length },
@@ -57,25 +63,37 @@
 	-->
 	<div class="border-t border-border/60 px-2 py-2">
 		<div class="flex items-center gap-2.5 px-2 py-1">
-			{#if launcher.playerHead}
-				<!-- pixelated: a face is eight pixels wide, and smoothing it is mush -->
-				<img
-					src={launcher.playerHead}
-					alt=""
-					class="size-7 shrink-0 rounded-sm [image-rendering:pixelated]"
-				/>
-			{:else}
-				<div class="size-7 shrink-0 rounded-sm bg-muted"></div>
-			{/if}
-
-			<div class="min-w-0 flex-1">
-				<p class="truncate text-sm">{launcher.session?.name ?? t("common.loading")}</p>
-				{#if launcher.session?.kind === "offline"}
-					<p class="truncate text-xs text-warn" title={t("status.notSignedInHint")}>
-						{t("status.notSignedIn")}
-					</p>
+			<!-- The face is the way to the skin: it is what changes, so it is what to click. -->
+			<button
+				type="button"
+				onclick={() => (skinOpen = true)}
+				aria-label={t("skin.open")}
+				title={t("skin.open")}
+				class="-mx-1 flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-1 py-0.5 text-left
+				       outline-none transition-colors hover:bg-accent/40 focus-visible:ring-3 focus-visible:ring-ring/50"
+			>
+				{#if launcher.playerHead}
+					<!-- pixelated: a face is eight pixels wide, and smoothing it is mush -->
+					<img
+						src={launcher.playerHead}
+						alt=""
+						class="size-7 shrink-0 rounded-sm [image-rendering:pixelated]"
+					/>
+				{:else}
+					<div class="size-7 shrink-0 rounded-sm bg-muted"></div>
 				{/if}
-			</div>
+
+				<span class="min-w-0 flex-1">
+					<span class="block truncate text-sm">
+						{launcher.session?.name ?? t("common.loading")}
+					</span>
+					{#if launcher.session?.kind === "offline"}
+						<span class="block truncate text-xs text-warn" title={t("status.notSignedInHint")}>
+							{t("status.notSignedIn")}
+						</span>
+					{/if}
+				</span>
+			</button>
 
 			<button
 				type="button"
@@ -87,5 +105,30 @@
 				<Settings class="size-4" />
 			</button>
 		</div>
+
+		<!--
+			Under the account rather than beside it: signing in is a sentence about the line
+			above it, and a second icon in that row would crowd the settings gear.
+		-->
+		{#if launcher.session?.kind === "offline"}
+			<Button
+				variant="secondary"
+				size="sm"
+				class="mt-1.5 w-full"
+				disabled={launcher.signingIn}
+				onclick={() => launcher.signIn()}
+			>
+				{#if launcher.signingIn}
+					<Loader2 class="size-4 animate-spin" />
+					{t("signIn.waitingShort")}
+				{:else}
+					<LogIn class="size-4" />
+					{t("signIn.action")}
+				{/if}
+			</Button>
+		{/if}
 	</div>
+
+	<SkinDialog bind:open={skinOpen} />
+	<SignInDialog />
 </nav>

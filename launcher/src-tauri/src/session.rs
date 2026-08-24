@@ -1,14 +1,16 @@
 //! Who the game launches as.
 //!
-//! Two sources, in order:
+//! Three sources, in order:
 //!
-//! 1. `~/.unifiedmc/session.json`, written by the hub mod when it runs inside a launcher
-//!    that is already signed in. A bridge until our own Azure application is approved.
-//! 2. An offline profile, which only reaches offline-mode servers.
+//! 1. Our own signed-in account - see `auth.rs`. Mojang approved the application, so the
+//!    launcher asks for its own tokens rather than borrowing anyone's.
+//! 2. `~/.unifiedmc/session.json`, handed over by a launcher that is already signed in.
+//!    Kept because it costs nothing and still works for anyone set up that way.
+//! 3. An offline profile, which only reaches offline-mode servers.
 //!
 //! Deliberately not lyceris' own Microsoft flow: it is hardcoded to the official launcher's
-//! client id, and presenting ourselves as that application is the one thing the approval we
-//! are waiting on rules out.
+//! client id, and presenting ourselves as that application is exactly what the approval
+//! rules out.
 
 use std::fs;
 
@@ -21,7 +23,10 @@ use crate::paths;
 pub struct Session {
     pub name: String,
     pub uuid: String,
-    #[serde(default)]
+    /// Never serialised: this struct is handed to the webview, which has no use for the token
+    /// and every reason not to hold Minecraft's credentials in a JS heap for a whole session.
+    /// Only `play.rs` reads it, in Rust, on the way to the game's own argv.
+    #[serde(default, skip_serializing)]
     pub token: String,
     /// "microsoft" or "offline" - the UI says which, because it changes where you can play.
     #[serde(default)]
@@ -43,7 +48,14 @@ impl Session {
     }
 }
 
-pub fn current(offline_name: &str) -> Session {
+/// Who to launch as, refreshing our own token when it has run out.
+///
+/// Async because the refresh is a network call. Everything that starts a game needs the
+/// answer to be current, and a stale token fails at the server with nothing to explain it.
+pub async fn current(client: &reqwest::Client, offline_name: &str) -> Session {
+    if let Some(signed_in) = crate::auth::session(client).await {
+        return signed_in;
+    }
     borrowed().unwrap_or_else(|| Session::offline(offline_name))
 }
 
@@ -70,7 +82,7 @@ fn borrowed() -> Option<Session> {
 /// Minecraft access tokens are JWTs. Read `exp` without verifying anything - we are not the
 /// one checking the signature, we only want to say "expired" rather than let a server refuse
 /// the player for no visible reason.
-fn expired(token: &str) -> bool {
+pub(crate) fn expired(token: &str) -> bool {
     let Some(payload) = token.split('.').nth(1) else {
         return false; // unreadable expiry must not block a session that may well work
     };

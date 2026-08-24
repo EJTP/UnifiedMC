@@ -65,8 +65,10 @@ to another loader or version is close to free.
 The `client/` directory is the point: a client-only mod in `mods/` is how a server
 dies on startup, so shaders and minimaps live somewhere the loader does not scan.
 
-`config/` becomes readable by anyone who can reach that port. Anything secret in
-there belongs in `server-only.txt`.
+`config/` becomes readable by anyone who can reach that port, with no token asked
+for. Anything secret in there belongs in `server-only.txt` - a bare name matches a
+file, and a name ending in `/` holds back a whole directory and everything under
+it. The server prints the file count and says so at startup.
 
 Endpoints:
 

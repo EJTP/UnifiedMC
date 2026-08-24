@@ -1,4 +1,4 @@
-//! The player's own face, for the title bar.
+//! The player's own face, for the title bar - and changing it.
 //!
 //! A signed-in player has a skin at Mojang; an offline profile has whichever default
 //! Minecraft would pick for that name. Either way it ends up as the 8x8 head from the skin
@@ -14,6 +14,19 @@ use image::{imageops, GenericImageView, RgbaImage};
 const HEAD: (u32, u32, u32, u32) = (8, 8, 8, 8);
 const HAT: (u32, u32, u32, u32) = (40, 8, 8, 8);
 const OUTPUT: u32 = 64;
+
+const SKINS: &str = "https://api.minecraftservices.com/minecraft/profile/skins";
+/// A skin is a 64 pixel png - a few kilobytes. Anything near this is not one.
+const MAX_UPLOAD: usize = 256 * 1024;
+
+/// The same cap, applied to the base64 the webview sends before anything decodes it.
+///
+/// `check` is too late to be the only limit: by then a 500 MB file the player picked has
+/// already been read into a string by the webview and expanded back into a Vec here. Base64 is
+/// four characters per three bytes, so this is the longest string that can still be a skin.
+pub fn too_much_base64(encoded: &str) -> bool {
+    encoded.len() > MAX_UPLOAD.div_ceil(3) * 4
+}
 
 pub async fn head(client: &reqwest::Client, uuid: &str, online: bool) -> Option<String> {
     let texture = if online {
@@ -113,9 +126,157 @@ fn render(texture: &[u8]) -> Result<String> {
     ))
 }
 
+/// Wear this png. `slim` is the three-pixel-armed model, Mojang calls it "slim" against
+/// "classic".
+pub async fn upload(client: &reqwest::Client, token: &str, png: &[u8], slim: bool) -> Result<()> {
+    let token = signed_in(token)?;
+    check(png)?;
+
+    let (content_type, body) = form(if slim { "slim" } else { "classic" }, png);
+    let answer = client
+        .put(SKINS)
+        .bearer_auth(token)
+        .header(reqwest::header::CONTENT_TYPE, content_type)
+        .body(body)
+        .send()
+        .await?;
+    mojang_said(answer).await
+}
+
+/// Back to the default for this account.
+pub async fn reset(client: &reqwest::Client, token: &str) -> Result<()> {
+    let answer = client
+        .delete(format!("{SKINS}/active"))
+        .bearer_auth(signed_in(token)?)
+        .send()
+        .await?;
+    mojang_said(answer).await
+}
+
+/// Changing a skin is an account operation, so an offline profile simply cannot - and being
+/// told that up front beats a 401 from an API the player never knew was involved.
+fn signed_in(token: &str) -> Result<&str> {
+    match token.trim() {
+        "" => Err(anyhow!("error.skinNeedsMicrosoft")),
+        token => Ok(token),
+    }
+}
+
+/// What Mojang accepts, checked here so a bad file is a sentence rather than a 400. Only the
+/// header is read: dimensions are all we need, and decoding pixels to reject them is waste.
+fn check(png: &[u8]) -> Result<()> {
+    if png.len() > MAX_UPLOAD {
+        return Err(anyhow!("error.skinTooBig"));
+    }
+    let size = image::ImageReader::with_format(Cursor::new(png), image::ImageFormat::Png)
+        .into_dimensions()
+        .map_err(|_| anyhow!("error.skinNotPng"))?;
+    // 64x64 is the modern layout, 64x32 the pre-1.8 one that the game still understands
+    match size {
+        (64, 64) | (64, 32) => Ok(()),
+        _ => Err(anyhow!("error.skinWrongSize")),
+    }
+}
+
+/// multipart/form-data by hand: reqwest's `multipart` feature is off in Cargo.toml, and two
+/// fields of known content are less code than turning it on. The boundary is random because
+/// the file half is attacker-supplied - a fixed one could be spelled out inside the png and
+/// forge a second field.
+fn form(variant: &str, png: &[u8]) -> (String, Vec<u8>) {
+    let mut seed = [0u8; 16];
+    getrandom::fill(&mut seed).expect("the operating system has no randomness");
+    let boundary = format!("unifiedmc{}", hex::encode(seed));
+
+    let mut body = format!(
+        "--{boundary}\r\n\
+         Content-Disposition: form-data; name=\"variant\"\r\n\r\n\
+         {variant}\r\n\
+         --{boundary}\r\n\
+         Content-Disposition: form-data; name=\"file\"; filename=\"skin.png\"\r\n\
+         Content-Type: image/png\r\n\r\n"
+    )
+    .into_bytes();
+    body.extend_from_slice(png);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+
+    (format!("multipart/form-data; boundary={boundary}"), body)
+}
+
+/// Mojang answers with a status and little else worth showing.
+async fn mojang_said(answer: reqwest::Response) -> Result<()> {
+    let status = answer.status();
+    if status.is_success() {
+        return Ok(());
+    }
+    Err(match status.as_u16() {
+        // the session is real but stale - signing in again is the fix, and only the player can
+        401 | 403 => anyhow!("error.skinSignedOut"),
+        400 | 413 | 415 => anyhow!("error.skinRefused"),
+        other => anyhow!("Mojang answered {other}"),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn png(width: u32, height: u32) -> Vec<u8> {
+        let mut encoded = Cursor::new(Vec::new());
+        RgbaImage::new(width, height)
+            .write_to(&mut encoded, image::ImageFormat::Png)
+            .unwrap();
+        encoded.into_inner()
+    }
+
+    #[test]
+    fn only_a_skin_shaped_png_is_sent() {
+        assert!(check(&png(64, 64)).is_ok());
+        assert!(
+            check(&png(64, 32)).is_ok(),
+            "the legacy layout is still a skin"
+        );
+        assert_eq!(
+            check(&png(32, 32)).unwrap_err().to_string(),
+            "error.skinWrongSize"
+        );
+        assert_eq!(
+            check(b"GIF89a not a png at all").unwrap_err().to_string(),
+            "error.skinNotPng"
+        );
+        assert_eq!(
+            check(&vec![0u8; MAX_UPLOAD + 1]).unwrap_err().to_string(),
+            "error.skinTooBig"
+        );
+        // and the same answer without decoding it first: a skin's worth of base64 fits, an
+        // arbitrary file the webview read into a string does not
+        assert!(!too_much_base64(&"A".repeat(MAX_UPLOAD / 3 * 4)));
+        assert!(too_much_base64(&"A".repeat(MAX_UPLOAD * 2)));
+        // an offline profile has no token, and must hear that instead of a 401
+        assert_eq!(
+            signed_in("  ").unwrap_err().to_string(),
+            "error.skinNeedsMicrosoft"
+        );
+    }
+
+    #[test]
+    fn the_body_carries_both_fields_and_closes() {
+        let skin = png(64, 64);
+        let (content_type, body) = form("slim", &skin);
+        let boundary = content_type
+            .split("boundary=")
+            .nth(1)
+            .expect("the content type names the boundary")
+            .to_string();
+
+        let text = String::from_utf8_lossy(&body);
+        assert!(text.contains("name=\"variant\"\r\n\r\nslim\r\n"));
+        assert!(text.contains("filename=\"skin.png\""));
+        assert!(body.ends_with(format!("\r\n--{boundary}--\r\n").as_bytes()));
+        assert!(
+            body.windows(skin.len()).any(|window| window == skin),
+            "the png goes over untouched"
+        );
+    }
 
     #[test]
     fn a_head_comes_out_of_a_skin_sized_texture() {

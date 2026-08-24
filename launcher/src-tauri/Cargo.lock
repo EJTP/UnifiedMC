@@ -2634,6 +2634,7 @@ dependencies = [
  "clap",
  "dirs",
  "futures",
+ "getrandom 0.3.4",
  "hex",
  "hickory-resolver",
  "image",

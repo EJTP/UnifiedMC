@@ -55,7 +55,14 @@ impl Settings {
         if let Some(parent) = file.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(file, serde_json::to_vec_pretty(self)?)?;
+        fs::write(&file, serde_json::to_vec_pretty(self)?)?;
+        // This file holds an api key, and the process umask is 0022 or 0002 on most boxes -
+        // which makes it readable by everyone with an account on the machine.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&file, fs::Permissions::from_mode(0o600));
+        }
         Ok(())
     }
 }

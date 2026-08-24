@@ -1,19 +1,27 @@
-import { call, onProgress } from "./bridge";
+import { call, onProgress, onSignIn } from "./bridge";
 import { locale, resolveLocale, t, translate } from "./i18n.svelte";
 import type {
 	Hit,
 	Instance,
+	Kind,
 	Progress,
 	SavedServer,
 	ServerStatus,
 	Session,
-	Settings
+	Settings,
+	SignInPrompt
 } from "./types";
 
 /** Which of the two halves the window is showing. */
 export type View = "servers" | "instances";
 
 export type Tab = "search" | "installed" | "pack";
+
+/** What a row in the browser is: the four things a manifest and a catalogue both know about. */
+export type { Kind };
+
+/** In the order they are offered. The backend answers allowed_kinds with a subset of these. */
+export const KINDS: Kind[] = ["mod", "resourcepack", "shader", "datapack"];
 
 /** Must match PAGE in the Rust side, or "more" skips or repeats results. */
 const PAGE = 40;
@@ -244,6 +252,13 @@ class LauncherState {
 	/** The mod browser, for one server at a time. */
 	browsing = $state<SavedServer | null>(null);
 	tab = $state<Tab>("search");
+	kind = $state<Kind>("mod");
+	/**
+	 * What the server lets a player add on top of what it ships. All four until it says
+	 * otherwise, so a server that never answers is browsable rather than empty - the install
+	 * itself is refused in Rust either way, and that refusal is the one that counts.
+	 */
+	allowedKinds = $state<Kind[]>([...KINDS]);
 	hits = $state<Hit[]>([]);
 	picked = $state<Set<string>>(new Set());
 	loadingMods = $state(false);
@@ -263,9 +278,26 @@ class LauncherState {
 	openMods(server: SavedServer) {
 		this.browsing = server;
 		this.tab = "search";
+		this.kind = "mod";
+		this.allowedKinds = [...KINDS];
 		this.picked = new Set();
 		this.note = "";
+		void this.loadAllowedKinds(server.address);
 		void this.loadMods("");
+	}
+
+	async loadAllowedKinds(address: string) {
+		try {
+			const allowed = await call<string[]>("allowed_kinds", { address });
+			// The browser may have moved on to another server while this was in flight.
+			if (this.browsing?.address !== address) return;
+			this.allowedKinds = KINDS.filter((kind) => allowed.includes(kind));
+			if (!this.allowedKinds.includes(this.kind)) {
+				await this.switchKind(this.allowedKinds[0] ?? "mod");
+			}
+		} catch {
+			// An unreachable server tells us nothing about its rules; leave all four offered.
+		}
 	}
 
 	closeMods() {
@@ -275,6 +307,13 @@ class LauncherState {
 
 	async switchTab(tab: Tab) {
 		this.tab = tab;
+		this.picked = new Set();
+		await this.loadMods("");
+	}
+
+	/** A selection is a list of ids in one category; carrying it across would install nonsense. */
+	async switchKind(kind: Kind) {
+		this.kind = kind;
 		this.picked = new Set();
 		await this.loadMods("");
 	}
@@ -298,6 +337,7 @@ class LauncherState {
 			const hits = await call<Hit[]>("mods", {
 				address: this.browsing.address,
 				tab: this.tab,
+				kind: this.kind,
 				query,
 				offset: this.#offset
 			});
@@ -336,31 +376,112 @@ class LauncherState {
 		const ids = [...this.picked];
 		this.loadingMods = true;
 		try {
+			let said: string;
 			if (this.tab === "installed") {
 				const gone = await call<string[]>("remove_mods", {
 					address: this.browsing.address,
+					kind: this.kind,
 					names: ids
 				});
-				this.note =
+				said =
 					gone.length > 0 ? t("mods.removedCount", { count: gone.length }) : t("mods.removedNone");
 			} else {
 				const added = await call<string[]>("install_mods", {
 					address: this.browsing.address,
+					kind: this.kind,
 					ids
 				});
 				// zero is not success: the catalogue had nothing for this version and said so by
 				// handing back an empty list
-				this.note =
+				said =
 					added.length > 0
 						? t("mods.installedCount", { count: added.length })
 						: t("mods.installedNone");
 			}
 			this.picked = new Set();
+			// After the reload, not before it: loadMods clears the note on its way in, so a
+			// message set first is wiped before the player ever reads it.
 			await this.loadMods("");
+			this.note = said;
 		} catch (error) {
 			this.note = translate(String(error));
 		} finally {
 			this.loadingMods = false;
+		}
+	}
+
+	/**
+	 * Signing in, and what the player has to do while it waits.
+	 *
+	 * The prompt arrives as an event rather than as the call's return value, because the call
+	 * does not return until they have finished in their browser - which is the whole point of
+	 * the device flow, and would otherwise be several minutes of nothing on screen.
+	 */
+	signInPrompt = $state<SignInPrompt | null>(null);
+	signingIn = $state(false);
+	signInError = $state<string | null>(null);
+
+	async signIn() {
+		if (this.signingIn) return;
+		this.signingIn = true;
+		this.signInError = null;
+		const stop = await onSignIn((prompt) => (this.signInPrompt = prompt));
+		try {
+			this.session = await call<Session>("sign_in");
+			this.signInPrompt = null;
+			await this.refreshHead();
+		} catch (error) {
+			this.signInError = translate(String(error));
+		} finally {
+			stop();
+			this.signingIn = false;
+		}
+	}
+
+	/** Cancelling only stops us waiting; the code stays valid until Microsoft expires it. */
+	cancelSignIn() {
+		this.signInPrompt = null;
+		this.signInError = null;
+	}
+
+	async signOut() {
+		this.session = await call<Session>("sign_out");
+		this.playerHead = null;
+		await this.refreshHead();
+	}
+
+	/**
+	 * The skin, from the webview's own file picker.
+	 *
+	 * Both answer with null when it worked and with the reason when it did not, so the dialog
+	 * can show it where the player is looking instead of in the window-wide error bar.
+	 */
+	async setSkin(pngBase64: string, slim: boolean): Promise<string | null> {
+		try {
+			await call("set_skin", { pngBase64, slim });
+			await this.refreshHead();
+			return null;
+		} catch (error) {
+			return translate(String(error));
+		}
+	}
+
+	async resetSkin(): Promise<string | null> {
+		try {
+			await call("reset_skin");
+			await this.refreshHead();
+			return null;
+		} catch (error) {
+			return translate(String(error));
+		}
+	}
+
+	/** The face in the sidebar is the only proof the change went through. */
+	async refreshHead() {
+		try {
+			this.playerHead = await call<string | null>("player_head");
+		} catch {
+			// a stale face is better than none, and the change itself already reported
 		}
 	}
 

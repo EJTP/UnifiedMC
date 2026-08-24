@@ -20,8 +20,16 @@ people who never read this file.
 does not.
 
 **Localhost or a token, never neither.** Panels usually give one allocated port, so binding to
-localhost alone would make this useless over SFTP-only hosting. The token carries it instead,
-and the config can restrict to loopback for anyone who tunnels.
+localhost alone would make this useless over SFTP-only hosting. The token carries it instead.
+To restrict it to loopback you need *both* settings, because the game port is shared by default:
+
+```properties
+bind=127.0.0.1
+share-game-port=false
+```
+
+With `share-game-port=true` - the default - the endpoint is reachable wherever the game is, and
+`bind` cannot change that. That is the trade the token is paying for.
 
 **Writes land in `unifiedmc/`, nowhere else.** The endpoint takes a filename, never a path.
 Anything with a separator or `..` is refused before it reaches the filesystem. It cannot write
@@ -34,8 +42,14 @@ to load.
 **Nothing is executed.** No restart command, no shell, no plugin loading. The endpoint changes
 files; the panel restarts the server. Those stay separate jobs.
 
-**Rate limited and logged.** Failed attempts are slowed down and written to the server log with
-the source address, so a scan is visible rather than silent.
+**Rate limited and logged.** Ten wrong tokens in a minute and the endpoint stops answering for
+the rest of it, counted without blocking - the handler runs on one of Minecraft's own event-loop
+threads, and sleeping there would let anyone stall connections to the game. Each rejection is
+logged with the source address, capped at the same ten, so a scan is visible without filling the
+log.
+
+**POST only.** A state-changing url that a browser can be pointed at ends up in history and in
+proxy logs. Anything else gets a 405.
 
 ## What it cannot do
 
@@ -57,13 +71,23 @@ admin-token=<64 hex characters>
 
 Restart the server. It says `remote control enabled` when the token took.
 
-```sh
-export UNIFIEDMC_ADMIN_TOKEN=<the token>
+The mod speaks no TLS, so the token would go over the wire in the clear - and whoever reads it
+can put a jar in every player's `mods/`. Tunnel it instead:
 
-unifiedmc-server-cli push mc.example.com:25566 sodium.jar   # into unifiedmc/client/
-unifiedmc-server-cli remove mc.example.com:25566 sodium.jar
-unifiedmc-server-cli rescan mc.example.com:25566            # rebuild the manifest
+```sh
+ssh -L 25566:localhost:25566 you@mc.example.com
 ```
+
+```sh
+export UNIFIEDMC_ADMIN_TOKEN=<the token>     # env, not --token: argv is world-readable
+
+unifiedmc-server-cli push localhost:25566 sodium.jar   # into unifiedmc/client/
+unifiedmc-server-cli remove localhost:25566 sodium.jar
+unifiedmc-server-cli rescan localhost:25566            # rebuild the manifest
+```
+
+The CLI refuses plain http to anything but this machine. `--insecure` says so out loud, for a
+network you actually trust.
 
 A change is not published until a rescan. That is deliberate: an upload that is still running
 should not become half a manifest.
@@ -83,3 +107,8 @@ Against a running server, not assumed:
 | correct | 200 |
 
 Nothing was written outside `unifiedmc/`.
+
+Not yet re-run against a server since the 2026-08 fixes, so these are unverified there:
+`rescan` with no `name` (used to be a dropped connection, now a 200), `?name=%zz` (400 rather
+than a dropped connection), `GET /admin/delete` (405), and a name containing a newline (400).
+The compile and the `-ea` self-check cover the validators; the routing needs a live server.

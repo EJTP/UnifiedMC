@@ -32,9 +32,6 @@
 
 	const manifest = $derived(status?.manifest ?? null);
 
-	/** Anything to install into: the server's loader, or one the player chose. */
-	const hasLoader = $derived(Boolean(manifest?.loader));
-
 	const singleplayer = $derived(server.address.trim() === "");
 
 	/** What the row says about itself. Version, what it runs, how much it will pull. */
@@ -155,18 +152,17 @@
 		</Button>
 
 		<!--
-			Only where mods can actually go: without a loader the instance is plain Minecraft, and
-			a button that opens a catalogue nothing can be installed from is worse than no button.
-			The gap it leaves stays reserved so the row keeps its width - the gear next to it is
-			how a Vanilla server gets a loader in the first place.
+			Wherever there is a manifest to install against, loader or not: resource packs, shaders
+			and datapacks need no loader at all, and a server that announces none is exactly the
+			one that leaves all four categories to the player. Only an unreachable server has
+			nothing to browse - the gap it leaves stays reserved so the row keeps its width.
 		-->
-		{#if hasLoader}
+		{#if canPlay}
 			<Button
 				variant="ghost"
 				size="icon"
 				class="text-muted-foreground hover:text-foreground"
 				onclick={onmods}
-				disabled={!canPlay}
 				title={t("mods.title")}
 				aria-label={t("servers.action.mods", { name: server.name })}
 			>

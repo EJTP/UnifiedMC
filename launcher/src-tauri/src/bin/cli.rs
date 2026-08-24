@@ -9,6 +9,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
 use launcher_lib::pack::{self, Side};
+// the same predicate the launcher writes manifest files through: a path out of somebody else's
+// archive has to stay inside the directory we are writing, on either side of the connection
+use launcher_lib::sync::plain_relative;
 
 #[derive(Parser)]
 #[command(
@@ -33,7 +36,7 @@ enum Command {
         #[arg(long)]
         dry_run: bool,
         /// CurseForge API key, needed to resolve a CurseForge manifest.
-        #[arg(long, env = "UNIFIEDMC_CF_KEY")]
+        #[arg(long, env = "UNIFIEDMC_CF_KEY", hide_env_values = true)]
         cf_key: Option<String>,
     },
 
@@ -49,8 +52,13 @@ enum Command {
         /// "client" (served, never loaded) or "shared" (staged for the next restart).
         #[arg(long, default_value = "client")]
         area: String,
-        #[arg(long, env = "UNIFIEDMC_ADMIN_TOKEN")]
+        // hide_env_values: the doc tells you to export this, and --help is exactly what ends
+        // up in a paste, a screenshot, a CI log or tmux scrollback.
+        #[arg(long, env = "UNIFIEDMC_ADMIN_TOKEN", hide_env_values = true)]
         token: String,
+        /// Send the token over plain http to a remote host anyway.
+        #[arg(long)]
+        insecure: bool,
     },
 
     /// Remove a client mod from a running server.
@@ -59,15 +67,21 @@ enum Command {
         name: String,
         #[arg(long, default_value = "client")]
         area: String,
-        #[arg(long, env = "UNIFIEDMC_ADMIN_TOKEN")]
+        #[arg(long, env = "UNIFIEDMC_ADMIN_TOKEN", hide_env_values = true)]
         token: String,
+        /// Send the token over plain http to a remote host anyway.
+        #[arg(long)]
+        insecure: bool,
     },
 
     /// Make the server re-read its directories and rebuild the manifest.
     Rescan {
         server: String,
-        #[arg(long, env = "UNIFIEDMC_ADMIN_TOKEN")]
+        #[arg(long, env = "UNIFIEDMC_ADMIN_TOKEN", hide_env_values = true)]
         token: String,
+        /// Send the token over plain http to a remote host anyway.
+        #[arg(long)]
+        insecure: bool,
     },
 }
 
@@ -92,38 +106,40 @@ async fn main() -> Result<()> {
             jar,
             area,
             token,
-        } => push(&server, &jar, &area, &token).await,
+            insecure,
+        } => push(&base(&server, insecure)?, &jar, &area, &token).await,
         Command::Remove {
             server,
             name,
             area,
             token,
+            insecure,
         } => {
             remote(
-                &server,
+                &base(&server, insecure)?,
                 "delete",
                 &[("name", &name), ("area", &area)],
                 &token,
             )
             .await
         }
-        Command::Rescan { server, token } => remote(&server, "rescan", &[], &token).await,
+        Command::Rescan {
+            server,
+            token,
+            insecure,
+        } => remote(&base(&server, insecure)?, "rescan", &[], &token).await,
     }
 }
 
-/// 32 bytes of randomness, hex encoded. Long enough that guessing is not a strategy.
+/// 32 bytes from the operating system, hex encoded.
+///
+/// Not std's RandomState: that is a hash seed, and four SipHash outputs of the messages 0, 8,
+/// 16, 24 under one thread-local key is not a sentence anyone should have to reason about when
+/// the answer is a credential.
 fn new_token() -> String {
-    use std::hash::{BuildHasher, Hasher, RandomState};
-
-    let mut bytes = Vec::with_capacity(32);
-    while bytes.len() < 32 {
-        // RandomState is seeded by the OS and is the one source of entropy in std
-        let mut hasher = RandomState::new().build_hasher();
-        hasher.write_usize(bytes.len());
-        bytes.extend_from_slice(&hasher.finish().to_le_bytes());
-    }
-    bytes.truncate(32);
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    let mut bytes = [0u8; 32];
+    getrandom::fill(&mut bytes).expect("the operating system has no randomness");
+    hex::encode(bytes)
 }
 
 async fn init(
@@ -178,11 +194,21 @@ async fn init(
     let mut failed: Vec<(String, String)> = Vec::new();
 
     for file in &pack.files {
+        // A pack is a zip somebody else wrote, and both a member name and an mrpack index
+        // entry are attacker text: "overrides/../../../../.ssh/authorized_keys" survives every
+        // strip_prefix below and lands wherever it likes, as whoever ran this.
+        if !plain_relative(&file.path) {
+            println!("  skipping {} - not a path inside the pack", file.path);
+            continue;
+        }
+
         // config for the server, mods split by which side loads them
         let target = match (file.side, file.path.starts_with("mods/")) {
+            // strip_prefix, not trim_start_matches: that one strips repeatedly, so
+            // "mods/mods/x.jar" would come out as "x.jar"
             (Side::ClientOnly, true) => root
                 .join("unifiedmc/client")
-                .join(file.path.trim_start_matches("mods/")),
+                .join(file.path.strip_prefix("mods/").unwrap_or(&file.path)),
             // client-config/ mirrors config/, so the prefix must not be repeated inside it
             (Side::ClientOnly, false) => root
                 .join("unifiedmc/client-config")
@@ -206,7 +232,16 @@ async fn init(
             // One dead link must not end a two hundred file import. Collect and report at the
             // end, so the admin sees the whole list rather than one at a time.
             match fetch(&client, url).await {
-                Ok(bytes) => std::fs::write(&target, &bytes)?,
+                Ok(bytes) => match verify(&bytes, file.sha1.as_deref()) {
+                    // The pack states a hash for a reason: a repointed link or a swapped CDN
+                    // object would otherwise become a jar in mods/, and from there a jar in
+                    // every player's mods/ by way of the manifest.
+                    Ok(()) => std::fs::write(&target, &bytes)?,
+                    Err(error) => {
+                        failed.push((file.path.clone(), format!("{error}")));
+                        continue;
+                    }
+                },
                 Err(error) => {
                     failed.push((file.path.clone(), format!("{error}")));
                     continue;
@@ -234,6 +269,18 @@ async fn init(
 
     println!("Upload its contents to your server, then restart it.");
     Ok(())
+}
+
+fn verify(bytes: &[u8], expected: Option<&str>) -> Result<()> {
+    use sha1::{Digest, Sha1};
+    let Some(expected) = expected else {
+        return Ok(()); // a pack that states no hash cannot be held to one
+    };
+    let got = hex::encode(Sha1::digest(bytes));
+    if got.eq_ignore_ascii_case(expected) {
+        return Ok(());
+    }
+    Err(anyhow!("hash mismatch: expected {expected}, got {got}"))
 }
 
 async fn fetch(client: &reqwest::Client, url: &str) -> Result<bytes::Bytes> {
@@ -297,7 +344,7 @@ fn sanitise(name: &str) -> String {
     }
 }
 
-async fn push(server: &str, jar: &Path, area: &str, token: &str) -> Result<()> {
+async fn push(base: &str, jar: &Path, area: &str, token: &str) -> Result<()> {
     let bytes = std::fs::read(jar).with_context(|| format!("reading {}", jar.display()))?;
     let name = jar
         .file_name()
@@ -310,7 +357,7 @@ async fn push(server: &str, jar: &Path, area: &str, token: &str) -> Result<()> {
 
     let client = reqwest::Client::new();
     let response = client
-        .post(format!("{}/admin/upload", base(server)))
+        .post(format!("{base}/admin/upload"))
         .bearer_auth(token)
         .query(&[
             ("name", name.as_str()),
@@ -324,9 +371,9 @@ async fn push(server: &str, jar: &Path, area: &str, token: &str) -> Result<()> {
     report(response).await
 }
 
-async fn remote(server: &str, action: &str, query: &[(&str, &str)], token: &str) -> Result<()> {
+async fn remote(base: &str, action: &str, query: &[(&str, &str)], token: &str) -> Result<()> {
     let response = reqwest::Client::new()
-        .post(format!("{}/admin/{action}", base(server)))
+        .post(format!("{base}/admin/{action}"))
         .bearer_auth(token)
         .query(query)
         .send()
@@ -334,12 +381,46 @@ async fn remote(server: &str, action: &str, query: &[(&str, &str)], token: &str)
     report(response).await
 }
 
-fn base(server: &str) -> String {
-    if server.starts_with("http") {
+/// A bare address becomes a url - but never a cleartext one to another machine.
+///
+/// The token authenticates a write endpoint that hard-links a jar into every player's mods
+/// directory, so anyone on the path between here and the host who reads it owns the group. The
+/// mod speaks no TLS, so the answer is a tunnel rather than a scheme:
+///     ssh -L 25566:localhost:25566 you@host
+/// and then push to localhost:25566.
+fn base(server: &str, insecure: bool) -> Result<String> {
+    let url = if server.starts_with("http://") || server.starts_with("https://") {
         server.trim_end_matches('/').to_string()
     } else {
         format!("http://{server}")
+    };
+    if insecure || !url.starts_with("http://") || is_this_machine(host_of(&url)) {
+        return Ok(url);
     }
+    Err(anyhow!(
+        "{url} would send the admin token in the clear.\n\
+         Tunnel it instead:  ssh -L 25566:localhost:25566 <host>\n\
+         then use localhost:25566 - or pass --insecure if the network really is trusted."
+    ))
+}
+
+fn host_of(url: &str) -> &str {
+    let authority = url
+        .trim_start_matches("http://")
+        .split('/')
+        .next()
+        .unwrap_or("");
+    match authority.strip_prefix('[') {
+        Some(v6) => v6.split(']').next().unwrap_or(""), // [::1]:25566
+        None => authority
+            .rsplit_once(':')
+            .map(|(host, _)| host)
+            .unwrap_or(authority),
+    }
+}
+
+fn is_this_machine(host: &str) -> bool {
+    matches!(host, "localhost" | "127.0.0.1" | "::1")
 }
 
 async fn report(response: reqwest::Response) -> Result<()> {
@@ -372,6 +453,33 @@ mod tests {
     }
 
     #[test]
+    fn a_pack_member_cannot_write_outside_the_directory_we_make() {
+        assert!(plain_relative("mods/sodium.jar"));
+        assert!(plain_relative("config/create/common.toml"));
+        for hostile in [
+            "../../../../.ssh/authorized_keys",
+            "/etc/cron.d/x",
+            "mods/../../../x",
+            "..",
+            "",
+        ] {
+            assert!(!plain_relative(hostile), "accepted {hostile:?}");
+        }
+    }
+
+    #[test]
+    fn a_pack_states_a_hash_so_that_it_gets_checked() {
+        // sha1 of "jar bytes"
+        let bytes = b"jar bytes";
+        use sha1::{Digest, Sha1};
+        let real = hex::encode(Sha1::digest(bytes));
+        assert!(verify(bytes, Some(&real)).is_ok());
+        assert!(verify(bytes, Some(&real.to_uppercase())).is_ok());
+        assert!(verify(bytes, None).is_ok(), "no hash is not a failure");
+        assert!(verify(bytes, Some("da39a3ee5e6b4b0d3255bfef95601890afd80709")).is_err());
+    }
+
+    #[test]
     fn tokens_are_long_and_not_repeated() {
         let token = new_token();
         assert_eq!(token.len(), 64, "32 bytes, hex encoded");
@@ -381,10 +489,33 @@ mod tests {
 
     #[test]
     fn a_bare_address_becomes_a_url_and_a_url_is_left_alone() {
-        assert_eq!(base("mc.example.com:25566"), "http://mc.example.com:25566");
         assert_eq!(
-            base("http://mc.example.com:25566/"),
-            "http://mc.example.com:25566"
+            base("localhost:25566", false).unwrap(),
+            "http://localhost:25566"
         );
+        assert_eq!(
+            base("http://127.0.0.1:25566/", false).unwrap(),
+            "http://127.0.0.1:25566"
+        );
+        assert_eq!(
+            base("https://mc.example.com/", false).unwrap(),
+            "https://mc.example.com"
+        );
+    }
+
+    #[test]
+    fn the_admin_token_does_not_go_over_the_wire_in_the_clear() {
+        // the exact line the doc used to teach
+        assert!(base("mc.example.com:25566", false).is_err());
+        assert!(base("http://mc.example.com:25566", false).is_err());
+        // said out loud, it is allowed - and a tunnel needs no flag at all
+        assert!(base("mc.example.com:25566", true).is_ok());
+        assert!(base("[::1]:25566", false).is_ok());
+        // "http" is a prefix of more than one thing; only a scheme is a scheme
+        assert_eq!(
+            host_of("http://httpserver.example.com:1/x"),
+            "httpserver.example.com"
+        );
+        assert!(base("httpserver.example.com:25566", false).is_err());
     }
 }
