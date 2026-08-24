@@ -1,0 +1,13 @@
+{
+	"required": true,
+	"minVersion": "0.8",
+	"package": "dev.unifiedmc.hub.mixin",
+	"compatibilityLevel": "JAVA_21",
+	"client": [
+		"ConnectScreenMixin",
+		"ServerListAccessor"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	}
+}

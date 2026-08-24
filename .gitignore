@@ -1,0 +1,14 @@
+env.sh
+
+# local toolchain and virtualenv
+.toolchain/
+.venv/
+__pycache__/
+
+# gradle
+.gradle/
+build/
+
+# server mod is built with javac, not gradle
+server/out/
+server/*.jar

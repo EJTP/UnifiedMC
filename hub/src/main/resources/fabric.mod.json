@@ -1,0 +1,25 @@
+{
+	"schemaVersion": 1,
+	"id": "unifiedmc",
+	"version": "${version}",
+	"name": "UnifiedMC Hub",
+	"description": "Ein Client. Server waehlen, Version und Mods regeln sich selbst.",
+	"license": "MIT",
+	"environment": "client",
+	"entrypoints": {
+		"client": ["dev.unifiedmc.hub.UnifiedMcHub"]
+	},
+	"mixins": [
+		{
+			"config": "unifiedmc.mixins.json",
+			"environment": "client"
+		}
+	],
+	"depends": {
+		"fabricloader": ">=0.19.3",
+		"minecraft": "~1.21.11",
+		"java": ">=21",
+		"fabric-api": "*",
+		"owo": "*"
+	}
+}
