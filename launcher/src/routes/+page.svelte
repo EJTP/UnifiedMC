@@ -1,156 +1,117 @@
 <script lang="ts">
-  import { invoke } from "@tauri-apps/api/core";
+	import { onMount } from "svelte";
+	import { Plus, RefreshCw, TriangleAlert } from "@lucide/svelte";
+	import { Button } from "$lib/components/ui/button";
+	import { Input } from "$lib/components/ui/input";
+	import TitleBar from "$lib/components/app/TitleBar.svelte";
+	import ServerCard from "$lib/components/app/ServerCard.svelte";
+	import ProgressOverlay from "$lib/components/app/ProgressOverlay.svelte";
+	import SettingsDialog from "$lib/components/app/SettingsDialog.svelte";
+	import ModBrowser from "$lib/components/app/ModBrowser.svelte";
+	import { launcher } from "$lib/state.svelte";
 
-  let name = $state("");
-  let greetMsg = $state("");
+	let settingsOpen = $state(false);
+	let adding = $state(false);
+	let address = $state("");
+	let name = $state("");
 
-  async function greet(event: Event) {
-    event.preventDefault();
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    greetMsg = await invoke("greet", { name });
-  }
+	// onMount, not $effect: start() writes the same state it reads, and an effect that
+	// tracks its own writes re-runs itself for as long as the window is open.
+	onMount(() => {
+		void launcher.start();
+	});
+
+	async function submit(event: SubmitEvent) {
+		event.preventDefault();
+		await launcher.add(name, address);
+		address = "";
+		name = "";
+		adding = false;
+	}
 </script>
 
-<main class="container">
-  <h1>Welcome to Tauri + Svelte</h1>
+<div class="relative flex h-full flex-col">
+	<TitleBar onsettings={() => (settingsOpen = true)} />
 
-  <div class="row">
-    <a href="https://vite.dev" target="_blank">
-      <img src="/vite.svg" class="logo vite" alt="Vite Logo" />
-    </a>
-    <a href="https://tauri.app" target="_blank">
-      <img src="/tauri.svg" class="logo tauri" alt="Tauri Logo" />
-    </a>
-    <a href="https://svelte.dev" target="_blank">
-      <img src="/svelte.svg" class="logo svelte-kit" alt="SvelteKit Logo" />
-    </a>
-  </div>
-  <p>Click on the Tauri, Vite, and SvelteKit logos to learn more.</p>
+	{#if launcher.browsing}
+		<ModBrowser />
+	{:else}
+	<main class="flex min-h-0 flex-1 flex-col px-5 pb-5 pt-4">
+		<div class="mb-3 flex items-center gap-2">
+			<h1 class="text-base font-semibold tracking-tight">Server</h1>
+			<span class="text-xs text-muted-foreground">{launcher.servers.length}</span>
 
-  <form class="row" onsubmit={greet}>
-    <input id="greet-input" placeholder="Enter a name..." bind:value={name} />
-    <button type="submit">Greet</button>
-  </form>
-  <p>{greetMsg}</p>
-</main>
+			<div class="flex-1"></div>
 
-<style>
-.logo.vite:hover {
-  filter: drop-shadow(0 0 2em #747bff);
-}
+			<Button
+				variant="ghost"
+				size="icon"
+				class="size-7 text-muted-foreground"
+				onclick={() => launcher.probeAll()}
+				aria-label="Neu prüfen"
+			>
+				<RefreshCw class="size-4" />
+			</Button>
+			<Button size="sm" class="h-8 text-xs" onclick={() => (adding = !adding)}>
+				<Plus class="size-4" />
+				Server
+			</Button>
+		</div>
 
-.logo.svelte-kit:hover {
-  filter: drop-shadow(0 0 2em #ff3e00);
-}
+		{#if adding}
+			<form onsubmit={submit} class="mb-3 flex gap-2">
+				<Input bind:value={address} placeholder="host:port" class="font-mono" autofocus />
+				<Input bind:value={name} placeholder="Name (optional)" class="max-w-[180px]" />
+				<Button type="submit" size="sm" class="h-9">Hinzufügen</Button>
+			</form>
+		{/if}
 
-:root {
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-  font-size: 16px;
-  line-height: 24px;
-  font-weight: 400;
+		{#if launcher.error}
+			<div
+				class="mb-3 flex items-start gap-2.5 rounded-lg border border-destructive/40 bg-destructive/10 px-3.5 py-2.5"
+			>
+				<TriangleAlert class="mt-0.5 size-4 shrink-0 text-destructive" />
+				<p class="text-xs leading-relaxed text-destructive-foreground/90">{launcher.error}</p>
+			</div>
+		{/if}
 
-  color: #0f0f0f;
-  background-color: #f6f6f6;
+		<!--
+			A plain overflow container, not the library's scroll area: that one measures itself
+			with a resize observer, and inside a conditional flex child it kept re-measuring
+			until the renderer stopped answering. The scrollbar is styled in app.css anyway.
+		-->
+		<div class="-mx-1 min-h-0 flex-1 overflow-y-auto px-1">
+			<div class="flex flex-col gap-2">
+				{#each launcher.servers as server (server.id)}
+					<ServerCard
+						{server}
+						status={launcher.status[server.id]}
+						hubVersion="1.21.11"
+						busy={launcher.playing === server.id}
+						onplay={() => launcher.play(server)}
+						onmods={() => launcher.openMods(server)}
+						onremove={() => launcher.remove(server.id)}
+					/>
+				{/each}
 
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  -webkit-text-size-adjust: 100%;
-}
+				{#if launcher.servers.length === 0}
+					<div
+						class="rounded-lg border border-dashed border-border/70 px-4 py-10 text-center"
+					>
+						<p class="text-sm text-muted-foreground">Noch kein Server</p>
+						<p class="mt-1 text-xs text-muted-foreground/70">
+							Adresse eintragen, den Rest holt sich der Client vom Server.
+						</p>
+					</div>
+				{/if}
+			</div>
+		</div>
+	</main>
+	{/if}
 
-.container {
-  margin: 0;
-  padding-top: 10vh;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  text-align: center;
-}
+	{#if launcher.progress}
+		<ProgressOverlay job={launcher.progress} />
+	{/if}
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: 0.75s;
-}
-
-.logo.tauri:hover {
-  filter: drop-shadow(0 0 2em #24c8db);
-}
-
-.row {
-  display: flex;
-  justify-content: center;
-}
-
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-
-a:hover {
-  color: #535bf2;
-}
-
-h1 {
-  text-align: center;
-}
-
-input,
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  color: #0f0f0f;
-  background-color: #ffffff;
-  transition: border-color 0.25s;
-  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
-}
-
-button {
-  cursor: pointer;
-}
-
-button:hover {
-  border-color: #396cd8;
-}
-button:active {
-  border-color: #396cd8;
-  background-color: #e8e8e8;
-}
-
-input,
-button {
-  outline: none;
-}
-
-#greet-input {
-  margin-right: 5px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    color: #f6f6f6;
-    background-color: #2f2f2f;
-  }
-
-  a:hover {
-    color: #24c8db;
-  }
-
-  input,
-  button {
-    color: #ffffff;
-    background-color: #0f0f0f98;
-  }
-  button:active {
-    background-color: #0f0f0f69;
-  }
-}
-
-</style>
+	<SettingsDialog bind:open={settingsOpen} />
+</div>

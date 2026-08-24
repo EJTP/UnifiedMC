@@ -101,6 +101,14 @@
     @apply border-border outline-ring/50;
   }
 
+  html {
+    /*
+     * A launcher is read from further away than a web page, and Tailwind's spacing is in rem -
+     * so one number here scales type and layout together. 17px rather than the browser's 16.
+     */
+    font-size: 19px;
+  }
+
   html,
   body {
     height: 100%;

@@ -1,29 +1,34 @@
 <script lang="ts">
-	import { Settings, Minus, X } from "@lucide/svelte";
+	import { Settings } from "@lucide/svelte";
 	import { Button } from "$lib/components/ui/button";
 	import { launcher } from "$lib/state.svelte";
 
-	let { onsettings }: { onsettings?: () => void } = $props();
+	let { onsettings }: { onsettings: () => void } = $props();
 </script>
 
 <!--
-	data-tauri-drag-region makes the bar itself the window handle. Buttons inside it
-	must opt out, or dragging from them moves the window instead of clicking.
+	data-tauri-drag-region turns the bar into the window handle. Anything clickable inside it
+	has to sit above that, or dragging from a button moves the window instead of pressing it.
 -->
 <header
 	data-tauri-drag-region
-	class="flex h-12 shrink-0 items-center gap-3 border-b border-border/60 bg-card/40 px-3 backdrop-blur"
+	class="flex h-11 shrink-0 items-center gap-2.5 border-b border-border/60 bg-card/50 px-3"
 >
-	<img src="/mark.png" alt="" class="pointer-events-none size-6" />
-	<span class="pointer-events-none text-[13px] font-semibold tracking-tight">UnifiedMC</span>
+	<img src="/mark.png" alt="" class="pointer-events-none size-5" />
+	<span class="pointer-events-none text-base font-semibold">UnifiedMC</span>
 
 	<div class="flex-1"></div>
 
-	{#if launcher.account}
-		<span class="hidden text-xs text-muted-foreground sm:inline">
-			{launcher.account.name}
-			{#if launcher.account.kind === "offline"}
-				<span class="ml-1 rounded bg-warn/15 px-1.5 py-0.5 text-[10px] text-warn">offline</span>
+	{#if launcher.session}
+		<span class="flex items-center gap-1.5 text-xs text-muted-foreground">
+			{launcher.session.name}
+			{#if launcher.session.kind === "offline"}
+				<span
+					class="rounded bg-warn/15 px-1.5 py-0.5 text-xs font-medium text-warn"
+					title="Ohne Anmeldung erreichst du nur Server im Offline-Modus"
+				>
+					offline
+				</span>
 			{/if}
 		</span>
 	{/if}
