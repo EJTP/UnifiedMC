@@ -42,3 +42,44 @@ the source address, so a scan is visible rather than silent.
 Restart the server, read arbitrary files, change `server.properties`, or touch anything outside
 `unifiedmc/`. If you want those, use SFTP - that is what it is for, and it already has real
 authentication.
+
+## Using it
+
+Generate a token and put it in `config/unifiedmc.properties`:
+
+```sh
+unifiedmc-server-cli token
+```
+
+```properties
+admin-token=<64 hex characters>
+```
+
+Restart the server. It says `remote control enabled` when the token took.
+
+```sh
+export UNIFIEDMC_ADMIN_TOKEN=<the token>
+
+unifiedmc-server-cli push mc.example.com:25566 sodium.jar   # into unifiedmc/client/
+unifiedmc-server-cli remove mc.example.com:25566 sodium.jar
+unifiedmc-server-cli rescan mc.example.com:25566            # rebuild the manifest
+```
+
+A change is not published until a rescan. That is deliberate: an upload that is still running
+should not become half a manifest.
+
+## What was checked
+
+Against a running server, not assumed:
+
+| | |
+|---|---|
+| no token | 401 |
+| wrong token | 401 |
+| `../../evil.jar` | 400 |
+| `a/b.jar` | 400 |
+| `evil.sh` | 400 |
+| wrong hash | 422 |
+| correct | 200 |
+
+Nothing was written outside `unifiedmc/`.

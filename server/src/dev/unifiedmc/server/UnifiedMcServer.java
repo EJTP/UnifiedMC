@@ -81,6 +81,21 @@ public class UnifiedMcServer {
 	/** Never ship ourselves - we are the publisher, the client has no use for us. */
 	private static final String SELF = "unifiedmc-server";
 
+	/** Short enough to guess is worse than none, because it looks like security. */
+	private static final int MIN_TOKEN_LENGTH = 32;
+
+	/** A jar nobody should be able to make us hold in memory. */
+	private static final int MAX_UPLOAD_BYTES = 64 * 1024 * 1024;
+
+	/** Slow enough that guessing is pointless, short enough not to be a denial of service. */
+	private static final long FAILED_ATTEMPT_DELAY_MS = 1000;
+
+	private byte[] adminToken;
+	/** Kept so a rescan can rebuild the manifest without re-reading the file. */
+	private Properties config;
+	private final java.util.concurrent.atomic.AtomicLong lastFailure =
+			new java.util.concurrent.atomic.AtomicLong();
+
 	/** hash -> file, for serving. Holds mods AND configs, so it must never be the manifest source. */
 	private final Map<String, Path> byHash = new HashMap<>();
 	/** hash -> filename, the mods and only the mods */
@@ -111,10 +126,17 @@ public class UnifiedMcServer {
 			}
 		}
 
-		String loaderVersion = config.getProperty("loader-version", detectNeoforgeVersion());
 		config.putIfAbsent("port", "25566");
 		config.putIfAbsent("loader", "neoforge");
-		config.putIfAbsent("loader-version", loaderVersion);
+
+		// Not getProperty(key, detect...): Java evaluates that argument whether the key is
+		// present or not, so a configured version would still go looking on disk - and fail
+		// anywhere the loader is not installed the way we expect.
+		String loaderVersion = config.getProperty("loader-version");
+		if (loaderVersion == null || loaderVersion.isBlank()) {
+			loaderVersion = detectNeoforgeVersion();
+			config.setProperty("loader-version", loaderVersion);
+		}
 		config.putIfAbsent("minecraft", minecraftFor(loaderVersion));
 
 		if (!Files.exists(file)) {   // leave the admin something to edit
@@ -149,6 +171,13 @@ public class UnifiedMcServer {
 
 	private void start(Properties config) throws IOException {
 		prepareLayout();
+		publish(config);
+		serve(config);
+	}
+
+	/** Read what is on disk and turn it into the manifest. Called again by /admin/rescan. */
+	private void publish(Properties config) throws IOException {
+		this.config = config;
 		scan();
 
 		StringBuilder mods = new StringBuilder();
@@ -176,12 +205,28 @@ public class UnifiedMcServer {
 						+ "\"mods\":[%s],\"config\":[%s]}",
 				quote(config.getProperty("minecraft")), quote(config.getProperty("loader")),
 				quote(config.getProperty("loader-version")), mods, configs);
+	}
 
+	private void serve(Properties config) throws IOException {
 		int port = Integer.parseInt(config.getProperty("port"));
 		HttpServer http = HttpServer.create(new InetSocketAddress(port), BACKLOG);
 		http.createContext("/unifiedmc.json", this::serveManifest);
 		http.createContext("/mods/", this::serveMod);
 		http.createContext("/config/", this::serveMod);   // same store, addressed the same way
+
+		// Absent unless a token is configured. Not a default token, not a warning - absent.
+		// A write endpoint that is on by default is on for everyone who never read about it.
+		String token = config.getProperty("admin-token", "").trim();
+		if (token.length() >= MIN_TOKEN_LENGTH) {
+			this.adminToken = token.getBytes(StandardCharsets.UTF_8);
+			http.createContext("/admin/upload", this::adminUpload);
+			http.createContext("/admin/delete", this::adminDelete);
+			http.createContext("/admin/rescan", this::adminRescan);
+			System.out.println("[unifiedmc] remote control enabled");
+		} else if (!token.isEmpty()) {
+			System.err.println("[unifiedmc] admin-token is shorter than " + MIN_TOKEN_LENGTH
+					+ " characters; remote control stays off");
+		}
 		http.setExecutor(null);
 		http.start();
 		System.out.println("[unifiedmc] publishing " + byHash.size() + " mods on port " + port);
@@ -344,6 +389,179 @@ public class UnifiedMcServer {
 		}
 	}
 
+	/**
+	 * Is this request allowed to change anything?
+	 *
+	 * Constant-time comparison: String.equals returns as soon as two bytes differ, which leaks
+	 * the length and every correct prefix to anyone willing to measure.
+	 */
+	private boolean authorised(HttpExchange exchange) throws IOException {
+		String header = exchange.getRequestHeaders().getFirst("Authorization");
+		String presented = header != null && header.startsWith("Bearer ")
+				? header.substring("Bearer ".length())
+				: "";
+
+		if (adminToken != null
+				&& MessageDigest.isEqual(adminToken, presented.getBytes(StandardCharsets.UTF_8))) {
+			return true;
+		}
+
+		// visible in the log rather than silent, and slow enough that scanning is pointless
+		System.err.println("[unifiedmc] rejected admin request from "
+				+ exchange.getRemoteAddress().getAddress().getHostAddress());
+		long wait = FAILED_ATTEMPT_DELAY_MS - (System.currentTimeMillis() - lastFailure.get());
+		if (wait > 0) {
+			try {
+				Thread.sleep(wait);
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+			}
+		}
+		lastFailure.set(System.currentTimeMillis());
+		exchange.sendResponseHeaders(401, -1);
+		exchange.close();
+		return false;
+	}
+
+	/**
+	 * A name that addresses a file, never one that builds a path.
+	 *
+	 * The caller is on the network. Anything with a separator, a parent reference or a drive
+	 * letter is refused before it can reach the filesystem at all.
+	 */
+	static boolean isPlainFileName(String name) {
+		return name != null
+				&& !name.isEmpty()
+				&& name.length() <= 200
+				&& name.indexOf('/') < 0
+				&& name.indexOf('\\') < 0
+				&& name.indexOf('\0') < 0
+				&& name.indexOf(':') < 0
+				&& !name.startsWith(".")
+				&& name.endsWith(".jar");
+	}
+
+	/** Which directory a request may write to. Never mods/ - that is what a restart is for. */
+	private static Path adminTarget(String area, String name) {
+		Path root = switch (area) {
+			case "client" -> CLIENT_MODS;
+			case "shared" -> Path.of("unifiedmc/staged");
+			default -> null;
+		};
+		return root == null ? null : root.resolve(name);
+	}
+
+	private void adminUpload(HttpExchange exchange) throws IOException {
+		if (!authorised(exchange)) {
+			return;
+		}
+		Map<String, String> query = parseQuery(exchange.getRequestURI().getRawQuery());
+		String name = query.get("name");
+		String expected = query.get("sha1");
+		Path target = adminTarget(query.getOrDefault("area", "client"), name);
+
+		if (!isPlainFileName(name) || target == null || expected == null) {
+			respond(exchange, 400, "name must be a plain .jar filename, sha1 is required");
+			return;
+		}
+
+		byte[] body;
+		try (var in = exchange.getRequestBody()) {
+			body = in.readNBytes(MAX_UPLOAD_BYTES + 1);
+		}
+		if (body.length > MAX_UPLOAD_BYTES) {
+			respond(exchange, 413, "larger than " + (MAX_UPLOAD_BYTES / 1024 / 1024) + " MB");
+			return;
+		}
+
+        // Not about trust: a truncated upload would leave a corrupt jar the server then loads.
+		String got = sha1(body);
+		if (!MessageDigest.isEqual(got.getBytes(StandardCharsets.UTF_8),
+				expected.getBytes(StandardCharsets.UTF_8))) {
+			respond(exchange, 422, "hash mismatch: got " + got);
+			return;
+		}
+
+		Files.createDirectories(target.getParent());
+		Path temporary = target.resolveSibling(name + ".part");
+		Files.write(temporary, body);
+		Files.move(temporary, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+		System.out.println("[unifiedmc] stored " + target);
+		respond(exchange, 200, "stored " + target);
+	}
+
+	private void adminDelete(HttpExchange exchange) throws IOException {
+		if (!authorised(exchange)) {
+			return;
+		}
+		Map<String, String> query = parseQuery(exchange.getRequestURI().getRawQuery());
+		String name = query.get("name");
+		Path target = adminTarget(query.getOrDefault("area", "client"), name);
+
+		if (!isPlainFileName(name) || target == null) {
+			respond(exchange, 400, "name must be a plain .jar filename");
+			return;
+		}
+		boolean gone = Files.deleteIfExists(target);
+		System.out.println("[unifiedmc] " + (gone ? "removed " : "no such file ") + target);
+		respond(exchange, gone ? 200 : 404, gone ? "removed " + name : "not here");
+	}
+
+	/** Re-read the directories and rebuild the manifest. Changes nothing on disk. */
+	private void adminRescan(HttpExchange exchange) throws IOException {
+		if (!authorised(exchange)) {
+			return;
+		}
+		try {
+			byHash.clear();
+			modFiles.clear();
+			configFiles.clear();
+			forcedConfig.clear();
+			publish(config);
+			respond(exchange, 200, modFiles.size() + " mods, " + configFiles.size() + " config files");
+		} catch (IOException | RuntimeException e) {
+			respond(exchange, 500, "rescan failed: " + e);
+		}
+	}
+
+	private static Map<String, String> parseQuery(String raw) {
+		Map<String, String> values = new HashMap<>();
+		if (raw == null) {
+			return values;
+		}
+		for (String pair : raw.split("&")) {
+			int split = pair.indexOf('=');
+			if (split > 0) {
+				values.put(
+						java.net.URLDecoder.decode(pair.substring(0, split), StandardCharsets.UTF_8),
+						java.net.URLDecoder.decode(pair.substring(split + 1), StandardCharsets.UTF_8));
+			}
+		}
+		return values;
+	}
+
+	private static void respond(HttpExchange exchange, int status, String message)
+			throws IOException {
+		byte[] body = message.getBytes(StandardCharsets.UTF_8);
+		exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=utf-8");
+		exchange.sendResponseHeaders(status, body.length);
+		try (OutputStream out = exchange.getResponseBody()) {
+			out.write(body);
+		}
+	}
+
+	private static String sha1(byte[] data) throws IOException {
+		try {
+			StringBuilder hex = new StringBuilder();
+			for (byte b : MessageDigest.getInstance("SHA-1").digest(data)) {
+				hex.append(String.format("%02x", b));
+			}
+			return hex.toString();
+		} catch (java.security.NoSuchAlgorithmException e) {
+			throw new IOException("no SHA-1 in this JVM", e);
+		}
+	}
+
 	private static String quote(String value) {
 		return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
 	}
@@ -359,6 +577,17 @@ public class UnifiedMcServer {
 		assert isPrivate("debug.LOG");
 		assert !isPrivate("create-common.toml");
 		assert !isPrivate("fancymenu/customization/main.txt");
+
+		// a name addresses a file; it must never be able to build a path
+		assert isPlainFileName("sodium.jar");
+		assert !isPlainFileName("../../server.properties");
+		assert !isPlainFileName("sub/dir.jar");
+		assert !isPlainFileName("sub\\dir.jar");
+		assert !isPlainFileName("C:evil.jar");
+		assert !isPlainFileName(".hidden.jar");
+		assert !isPlainFileName("notajar.txt");
+		assert !isPlainFileName("");
+		assert !isPlainFileName(null);
 		System.out.println("self-check ok");
 	}
 }

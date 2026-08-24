@@ -7,6 +7,12 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[[bin]]
+# The server-side companion. Shares the pack reader and catalogue with the launcher,
+# because "which mods does this pack need and which side is each one for" is one question.
+name = "unifiedmc-server-cli"
+path = "src/bin/cli.rs"
+
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
@@ -33,4 +39,6 @@ reqwest = { version = "0.13.4", features = ["json", "query"] }
 md5 = "0.8.1"
 base64 = "0.23.1"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+clap = { version = "4.6.6", features = ["derive", "env"] }
+bytes = "1.12.1"
 
