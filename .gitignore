@@ -12,10 +12,6 @@ node_modules/
 .gradle/
 build/
 
-# server mod is built with javac, not gradle
-server/out/
-server/*.jar
-
 # rust
 target/
 

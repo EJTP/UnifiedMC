@@ -11,25 +11,45 @@ pulls the mods and configs from the server itself, and drops you into the game.
 
 </div>
 
+<!--
+  Screenshot goes here. Drop a PNG of the running app at docs/screenshot.png
+  (dark theme, the server list with one server online and its MOTD rendered),
+  then uncomment the line below. Nothing else references that path.
+-->
+<!-- <div align="center"><img src="docs/screenshot.png" width="860" alt="The launcher's server list"></div> -->
+
 ---
 
 Nobody installs a modpack by hand, and nobody ends up on the wrong version. Built for a
 private group — it is not a general-purpose launcher and does not try to be one.
 
-## What is in here
+## The constraint everything is shaped around
 
-| | |
-|---|---|
-| `launcher/` | Desktop app. Tauri, Svelte, Rust — one binary, no Python needed. |
-| `server/` | Server mod. Publishes what the server has over HTTP. |
-| `hub/` | Client mod. Server list inside Minecraft, for the launcher-free route. |
-| `unifiedmc.py` | The original shell. Still the reference for how everything behaves. |
-| `brand/` | The mark, and the script that renders it. |
+JVM mods cannot be added to a running Minecraft. Mixins apply at class load and registries
+freeze during startup. "Download the mods and then join" therefore always means starting a
+process that already has them — the only question is whether the player has to be the one
+who arranges that. Here they do not: the arranging happens between the click and the window.
 
 ## How it works
 
-The server is both the source of truth and the CDN. It scans what is installed, hashes it,
-and serves it:
+```mermaid
+sequenceDiagram
+    autonumber
+    participant P as Player
+    participant L as Launcher
+    participant S as Server
+    P->>L: clicks a server
+    L->>S: status ping on the game port
+    S-->>L: MOTD, players, protocol version
+    L->>S: GET /unifiedmc.json
+    S-->>L: minecraft, loader, mods, config
+    L->>S: GET /mods/... for every hash not stored yet
+    L->>L: hard-link mods, copy config, add the profile's own mods
+    L->>P: the JVM starts with the pack already in place
+```
+
+The server is both the source of truth and the CDN — no Modrinth lookup, no guessing which
+project a jar came from:
 
 ```
 GET /unifiedmc.json    the manifest
@@ -38,34 +58,104 @@ GET /config/<sha1>     a config file
 ```
 
 Paths in the manifest are relative, so a client resolves them against whatever address it
-reached the server on. Behind a proxy or a port forward, nothing has to be configured.
+reached the server on. Behind a proxy or a port forward, nothing has to be configured. The
+publisher lives in its own repository: [**UnifiedMC-Server**](https://github.com/EJTP/UnifiedMC-Server).
 
+## Servers that publish nothing
+
+Vanilla, Paper, or anything without the mod announces no pack and often no usable version
+either — a proxy answers the ping with the *oldest* protocol it accepts, which pins a player
+to 1.8.9 on a server that happily takes 1.21. So detection is a suggestion, not a verdict.
+
+```mermaid
+flowchart LR
+    A[Ping answered] --> B{Publishes a pack?}
+    B -- yes --> C[Sync it, launch]
+    B -- no --> D[Ask which profile to join with]
+    D --> E[An instance on that version]
+    D --> F[New profile, version and loader prefilled]
 ```
-mods/                      loaded here, and sent to clients
-unifiedmc/client/          sent to clients, never loaded here
-unifiedmc/client-config/   config that overrides config/, every launch
-unifiedmc/server-only.txt  one name per line: things clients must not get
-```
 
-That `client/` directory is the point: a client-only mod in `mods/` is how a server dies on
-startup, so shaders and minimaps live somewhere the loader does not scan.
+Every server row has a setup action: pick the Minecraft version from the full release list,
+pick the loader, or leave both automatic. When the server runs no loader of its own, any
+instance on the same version fits — client-side mods do not need the server to know about
+them.
 
-## The constraint everything is shaped around
+## What is in here
 
-JVM mods cannot be added to a running Minecraft. Mixins apply at class load and registries
-freeze during startup. "Download the mods and then join" always means starting a process
-that already has them — the only question is whether the player notices.
+| | |
+|---|---|
+| `launcher/` | The desktop app. Tauri, Svelte, Rust — one binary, no Python needed. |
+| `hub/` | Client mod. A server list inside Minecraft, for the launcher-free route. |
+| `unifiedmc.py` | The original shell. Still the reference for how everything behaves. |
+| `docs/` | [Reference](docs/reference.md) and the [remote-control rules](docs/remote-control.md). |
+| `brand/` | The mark, and the script that renders it. |
+
+The server mod used to live in `server/`. It is now [its own repository](https://github.com/EJTP/UnifiedMC-Server),
+because it ships to a different machine, on a different schedule, to people who never run
+this launcher.
 
 ## Getting started
 
 ```sh
-cp env.example.sh env.sh   # then fill it in
-./play.sh                  # straight to the server
+cd launcher
+pnpm install
+pnpm tauri dev
 ```
 
-Java is not required: Mojang publishes a JRE per Minecraft version and the launcher fetches
-it. Mods are stored by hash and hard-linked into each instance, so the same jar on ten
-servers costs one copy.
+You need Node with pnpm, a Rust toolchain, and Tauri's system dependencies. Java you do not
+need: Mojang publishes a JRE per Minecraft version and the launcher fetches the right one.
+
+Then add a server by address. It is pinged straight away; if it publishes a pack, pressing
+play is the whole procedure.
+
+Mods are stored by hash and hard-linked into each instance, so the same jar on ten servers
+costs one copy. Configs are copied instead — they are meant to be edited, and a link would
+write the change back into the shared store.
+
+```
+~/.unifiedmc/
+  blobs/<sha1>          every mod file once, shared across servers
+  mc/                   assets, libraries, versions, runtimes
+  instances/<key>/      one game directory per server or profile
+  profiles/<key>/mods/  mods the player added themselves
+```
+
+## Your own mods
+
+Each server and each profile has a directory in `profiles/`. Anything dropped there is
+loaded alongside what the server sends, and the server never learns about it.
+
+The built-in browser searches Modrinth and CurseForge, filtered to the version and loader in
+play, and offers only mods a single player can actually add — a mod marked
+`server_side: required` needs the server to carry it too, so it is left out. What the server
+already ships is marked rather than hidden.
+
+## Settings
+
+Memory is a slider in 512 MB steps with an automatic mode that follows the size of the pack,
+capped so an explicit choice cannot push the machine into swap. The collector is a choice
+between G1 tuned for short pauses, ZGC where the heap and the cores are there for it, the
+JVM's own defaults, and your own flags. The exact command-line the game will get is shown
+read-only underneath — it is generated by the same function that launches the game, so it
+cannot drift from what actually happens.
+
+The interface is German or English, following the system by default.
+
+## The server-side companion
+
+A CLI in this repository turns a modpack into a server directory and changes a running
+server without SFTP, sharing the launcher's pack reader so "which side is this mod for" is
+answered in one place.
+
+```sh
+cd launcher/src-tauri
+cargo run --bin unifiedmc-server-cli -- init pack.mrpack
+cargo run --bin unifiedmc-server-cli -- push mc.example.com:25566 sodium.jar
+```
+
+What that endpoint may and may not do is written down in [docs/remote-control.md](docs/remote-control.md);
+it is off unless a token is configured.
 
 ## Signing in
 
@@ -84,14 +174,15 @@ reaches offline-mode servers.
 ## Development
 
 ```sh
-./server/build.sh                 # server mod — one javac call
-cd launcher && pnpm tauri dev     # the app
+cd launcher && pnpm check                              # svelte-check
+cd launcher/src-tauri && cargo clippy --all-targets -- -D warnings
 cd launcher/src-tauri && cargo test
-./unifiedmc.py demo               # the shell's self-check, no network
+./unifiedmc.py demo                                    # the shell's self-check, no network
 ```
 
-The [full documentation](docs/reference.md) covers the sync rules, the mod catalogue and how the
-pieces talk to each other.
+Tests exist for the rules that would fail quietly: the hand-rolled ping protocol, the
+CurseForge hash reimplementation, heap sizing, and which side of a pack each mod belongs to.
+[CONTRIBUTING.md](CONTRIBUTING.md) says what each of them is guarding.
 
 ## Licence
 
