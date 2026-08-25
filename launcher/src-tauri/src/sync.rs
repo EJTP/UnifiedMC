@@ -283,6 +283,10 @@ pub async fn config(
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;
         }
+        // Cleared first, not written over. Windows refuses CREATE_ALWAYS on a file carrying the
+        // hidden attribute - which is what it puts on the dot-files mods write beside their
+        // config - and reports it as "Access is denied" with the copy, not the file, to blame.
+        clear(&target).with_context(|| format!("replacing {}", target.display()))?;
         fs::copy(paths::blobs().join(&entry.sha1), &target)
             .with_context(|| format!("writing {}", target.display()))?;
         delivered.insert(entry.path.clone(), entry.sha1.clone());
