@@ -3,6 +3,7 @@
 	import { Plus, RefreshCw, TriangleAlert, X } from "@lucide/svelte";
 	import { Button } from "$lib/components/ui/button";
 	import Sidebar from "$lib/components/app/Sidebar.svelte";
+	import TitleBar from "$lib/components/app/TitleBar.svelte";
 	import ServerCard from "$lib/components/app/ServerCard.svelte";
 	import InstanceCard from "$lib/components/app/InstanceCard.svelte";
 	import ProgressOverlay from "$lib/components/app/ProgressOverlay.svelte";
@@ -47,8 +48,12 @@
 	}
 </script>
 
-<div class="relative flex h-full">
-	<Sidebar onsettings={() => (settingsOpen = true)} />
+<!-- The system decorations are off, so the window's top edge is ours to draw and to drag. -->
+<div class="flex h-full flex-col">
+	<TitleBar />
+
+	<div class="relative flex min-h-0 flex-1">
+		<Sidebar onsettings={() => (settingsOpen = true)} />
 
 	<div class="flex min-w-0 flex-1 flex-col">
 		{#if launcher.browsing}
@@ -196,4 +201,5 @@
 		}}
 		oncancel={() => (launcher.choosing = null)}
 	/>
+	</div>
 </div>

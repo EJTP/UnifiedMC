@@ -67,6 +67,27 @@ impl Settings {
     }
 }
 
+/// The CurseForge key this build was compiled with, if it was given one.
+///
+/// A key is a credential, so it is never written down here: `option_env!` reads it at build
+/// time from the environment, which in a release comes from a CI secret and in a local build
+/// from whatever the person building it exports. A build without one is not broken - the
+/// catalogue is then Modrinth only, which is what it has always been.
+///
+/// It is extractable from the binary by anyone who cares to look. That is true of every
+/// launcher that ships one, and it is why CurseForge issues per-application keys they can
+/// revoke rather than pretending a desktop application can keep a secret.
+const BUILT_IN_CURSEFORGE_KEY: Option<&str> = option_env!("UNIFIEDMC_CF_KEY");
+
+/// The player's own key wins: they may have one with limits ours does not have, and a key
+/// they typed in themselves is a choice we should not quietly override.
+pub fn curseforge_key(settings: &Settings) -> String {
+    if !settings.curseforge_key.trim().is_empty() {
+        return settings.curseforge_key.trim().to_string();
+    }
+    BUILT_IN_CURSEFORGE_KEY.unwrap_or_default().to_string()
+}
+
 /// How much memory this machine has, so a picker cannot offer more than exists.
 pub fn machine_memory_mb() -> u64 {
     total_memory_mb()
@@ -146,6 +167,30 @@ fn total_memory_mb() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_typed_key_wins_over_the_one_built_in() {
+        let mine = Settings {
+            curseforge_key: "  typed-by-hand  ".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            curseforge_key(&mine),
+            "typed-by-hand",
+            "trimmed, and preferred"
+        );
+
+        // Whitespace is not a key; a settings file with a stray space must still fall through
+        // to the build's own, or the catalogue silently loses half its results.
+        let blank = Settings {
+            curseforge_key: "   ".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            curseforge_key(&blank),
+            BUILT_IN_CURSEFORGE_KEY.unwrap_or_default()
+        );
+    }
 
     #[test]
     fn a_profile_is_flags_and_custom_is_whatever_was_typed() {

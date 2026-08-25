@@ -84,13 +84,36 @@ impl Kind {
 ///
 /// The loader facet is a mod's alone: a resource pack is not built against Fabric, and asking
 /// for `categories:neoforge` on a texture pack matches nothing at all.
-fn modrinth_facets(kind: Kind, minecraft: &str, loader: &str) -> Vec<serde_json::Value> {
+/// Sinytra Connector runs Fabric mods on NeoForge. A pack that carries it has twice the
+/// catalogue available to it, and hiding half of that because the loader string says
+/// "neoforge" is wrong in exactly the case somebody went to the trouble of installing it.
+///
+/// Matched on the filename because a manifest carries names, not mod ids. Connector's jar is
+/// always called some spelling of "connector", and the false positive - a mod that merely has
+/// the word in its name - costs nothing worse than a slightly wider search.
+pub fn bridges_fabric(entries: &[ModEntry]) -> bool {
+    entries
+        .iter()
+        .any(|entry| entry.name.to_lowercase().contains("connector"))
+}
+
+fn modrinth_facets(
+    kind: Kind,
+    minecraft: &str,
+    loader: &str,
+    also_fabric: bool,
+) -> Vec<serde_json::Value> {
     let mut facets = vec![
         json!([format!("versions:{minecraft}")]),
         json!([format!("project_type:{}", kind.as_str())]),
     ];
     if kind == Kind::Mod && !loader.is_empty() {
-        facets.push(json!([format!("categories:{loader}")]));
+        // The inner array is an OR on Modrinth's side, so this reads "neoforge or fabric".
+        let mut loaders = vec![format!("categories:{loader}")];
+        if also_fabric && loader != "fabric" {
+            loaders.push("categories:fabric".into());
+        }
+        facets.push(json!(loaders));
     }
     facets
 }
@@ -422,6 +445,10 @@ impl Catalogue<'_> {
         self.modrinth_side(slug).await
     }
 
+    /// `own_setup` says there is no server on the other side - an instance the player runs
+    /// themselves. The client-side filter exists so nobody installs a mod that needs a server
+    /// half onto a server that has not got it; where the player IS the server, it only hides
+    /// most of the catalogue for no reason.
     pub async fn search(
         &self,
         manifest: &Manifest,
@@ -429,6 +456,7 @@ impl Catalogue<'_> {
         query: &str,
         limit: usize,
         offset: usize,
+        own_setup: bool,
     ) -> Result<Vec<Hit>> {
         let loader = manifest
             .loader
@@ -436,7 +464,8 @@ impl Catalogue<'_> {
             .map(|l| l.kind.to_lowercase())
             .unwrap_or_default();
 
-        let facets = modrinth_facets(kind, &manifest.minecraft, &loader);
+        let connected = bridges_fabric(&manifest.mods);
+        let facets = modrinth_facets(kind, &manifest.minecraft, &loader, connected);
 
         let response: serde_json::Value = self
             .modrinth(
@@ -459,7 +488,7 @@ impl Catalogue<'_> {
             for hit in hits {
                 let project_id = hit.get("project_id").and_then(|v| v.as_str()).unwrap_or("");
                 let on_server = served.contains(project_id);
-                if kind == Kind::Mod && !on_server && modrinth_verdict(hit) != "yes" {
+                if kind == Kind::Mod && !own_setup && !on_server && modrinth_verdict(hit) != "yes" {
                     continue;
                 }
                 let title = hit
@@ -494,7 +523,7 @@ impl Catalogue<'_> {
 
         if !self.cf_key.is_empty() {
             found.extend(
-                self.search_curseforge(manifest, kind, query, limit, offset, &seen)
+                self.search_curseforge(manifest, kind, query, limit, offset, &seen, own_setup)
                     .await,
             );
         }
@@ -503,6 +532,9 @@ impl Catalogue<'_> {
         Ok(found)
     }
 
+    // One private helper that mirrors search()'s parameters. Wrapping them in a struct to
+    // satisfy the count would add a type that exists for the lint and for nothing else.
+    #[allow(clippy::too_many_arguments)]
     async fn search_curseforge(
         &self,
         manifest: &Manifest,
@@ -511,6 +543,7 @@ impl Catalogue<'_> {
         limit: usize,
         offset: usize,
         seen: &HashSet<String>,
+        own_setup: bool,
     ) -> Vec<Hit> {
         let loader = manifest
             .loader
@@ -528,6 +561,9 @@ impl Catalogue<'_> {
             ("pageSize", limit.to_string()),
             ("index", offset.to_string()),
         ];
+        // Left as the one loader even when Connector is in the pack: CurseForge takes a single
+        // modLoaderType per search, and dropping it to widen the net would pull in Forge-only
+        // mods that no bridge makes work. Modrinth, which does take a list, is widened instead.
         // Only a mod is built against a loader; sending modLoaderType with class 12 or 6552
         // would filter every texture pack out of its own tab.
         if kind == Kind::Mod {
@@ -569,7 +605,7 @@ impl Catalogue<'_> {
                         self.cf_verdict_looked_up(id, slug, manifest).await
                     }
                 };
-                if verdict != "yes" {
+                if !own_setup && verdict != "yes" {
                     continue;
                 }
             }
@@ -822,11 +858,11 @@ mod tests {
 
     #[test]
     fn a_pack_is_not_searched_by_loader() {
-        let mods = modrinth_facets(Kind::Mod, "1.21.1", "neoforge");
+        let mods = modrinth_facets(Kind::Mod, "1.21.1", "neoforge", false);
         assert_eq!(mods[1], json!(["project_type:mod"]));
         assert!(mods.contains(&json!(["categories:neoforge"])));
         for kind in [Kind::ResourcePack, Kind::Shader, Kind::Datapack] {
-            let facets = modrinth_facets(kind, "1.21.1", "neoforge");
+            let facets = modrinth_facets(kind, "1.21.1", "neoforge", false);
             assert_eq!(facets[0], json!(["versions:1.21.1"]));
             assert_eq!(facets.len(), 2, "{kind:?} must not carry a loader facet");
         }
@@ -890,5 +926,45 @@ mod tests {
         assert!(cf_tags(&both, "1.21.1", "neoforge").contains("Server"));
         assert!(!cf_tags(&client, "1.21.1", "neoforge").contains("Server"));
         assert!(cf_tags(&other, "1.21.1", "neoforge").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod connector_tests {
+    use super::*;
+
+    fn entry(name: &str) -> ModEntry {
+        ModEntry {
+            name: name.into(),
+            sha1: "0".repeat(40),
+            url: String::new(),
+        }
+    }
+
+    #[test]
+    fn a_pack_carrying_connector_widens_the_search_to_fabric() {
+        let pack = vec![
+            entry("sodium-neoforge-0.8.12.jar"),
+            entry("Connector-1.0.0-beta.46+1.21.1-full.jar"),
+        ];
+        assert!(bridges_fabric(&pack));
+        assert!(!bridges_fabric(&[entry("sodium-neoforge-0.8.12.jar")]));
+
+        let widened = modrinth_facets(Kind::Mod, "1.21.1", "neoforge", true);
+        let loaders = widened.last().unwrap().to_string();
+        assert!(loaders.contains("categories:neoforge") && loaders.contains("categories:fabric"));
+
+        // Without it, the loader is the loader - offering Fabric mods for a plain NeoForge
+        // instance offers mods that will not load.
+        let plain = modrinth_facets(Kind::Mod, "1.21.1", "neoforge", false);
+        assert!(!plain.last().unwrap().to_string().contains("fabric"));
+
+        // A Fabric instance is already where those mods run; naming it twice is noise.
+        let fabric = modrinth_facets(Kind::Mod, "1.21.1", "fabric", true);
+        assert_eq!(
+            fabric.last().unwrap().as_array().unwrap().len(),
+            1,
+            "one loader, listed once"
+        );
     }
 }

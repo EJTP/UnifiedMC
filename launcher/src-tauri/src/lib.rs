@@ -368,12 +368,18 @@ async fn probe(state: State<'_, App>, id: String, address: String) -> Result<Ser
 
 /// Ping a server and read its manifest, plus the key naming the instance and the profile that
 /// belongs to it. Every command the mod browser has starts exactly this way.
+/// The browser addresses an instance as "instance-<id>", because both halves of that screen
+/// are otherwise the same component. Everything that has to tell the two apart asks here.
+fn instance_id(address: &str) -> Option<&str> {
+    address.strip_prefix("instance-")
+}
+
 async fn served(state: &State<'_, App>, address: &str) -> Result<(Manifest, String), String> {
     // An instance is not an address. The browser addresses one as "instance-<id>" because the
     // two halves of this screen are otherwise identical - but there is nothing on the other end
     // to ping, and resolving it as a hostname is how this used to fail: "failed to lookup
     // address information", for a profile sitting on the local disk.
-    if let Some(id) = address.strip_prefix("instance-") {
+    if let Some(id) = instance_id(address) {
         let list = instances::load();
         let instance = list
             .iter()
@@ -666,10 +672,17 @@ async fn mods(
         _ => {
             let catalogue = catalogue::Catalogue {
                 client: &client,
-                cf_key: &settings.curseforge_key,
+                cf_key: &settings::curseforge_key(&settings),
             };
             let mut hits = catalogue
-                .search(&manifest, kind, &query, PAGE, offset)
+                .search(
+                    &manifest,
+                    kind,
+                    &query,
+                    PAGE,
+                    offset,
+                    instance_id(&address).is_some(),
+                )
                 .await
                 .map_err(failed)?;
 
@@ -714,7 +727,7 @@ async fn install_mods(
 
     let catalogue = catalogue::Catalogue {
         client: &client,
-        cf_key: &settings.curseforge_key,
+        cf_key: &settings::curseforge_key(&settings),
     };
     let resolved = catalogue
         .resolve(&manifest, kind, &ids)

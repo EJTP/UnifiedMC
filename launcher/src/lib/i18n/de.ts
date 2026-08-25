@@ -207,6 +207,10 @@ export default {
 	"progress.download": "Dateien werden geladen",
 	"progress.launch": "Minecraft startet",
 
+	/* --------------------------------------------------------------- window. */
+	"window.minimise": "Minimieren",
+	"window.maximise": "Maximieren",
+
 	/* ---------------------------------------------------------------- error. */
 	"error.noAddress": "Keine Adresse angegeben",
 	"error.noVersionChosen": "Keine Version gewählt",

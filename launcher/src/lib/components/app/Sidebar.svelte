@@ -26,11 +26,6 @@
 	icons, the counts and the account line up on the same two edges instead of three rhythms.
 -->
 <nav class="flex w-52 shrink-0 flex-col border-r border-border/60 bg-card/40">
-	<div data-tauri-drag-region class="flex h-11 shrink-0 items-center gap-2.5 px-4">
-		<img src="/mark.png" alt="" class="pointer-events-none size-5" />
-		<span class="pointer-events-none truncate text-base font-semibold">UnifiedMC</span>
-	</div>
-
 	<div class="flex flex-col gap-0.5 px-2 pt-3">
 		{#each items as item (item.id)}
 			{@const active = launcher.view === item.id}
