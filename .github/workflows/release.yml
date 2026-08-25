@@ -1,0 +1,59 @@
+name: Release
+
+# Two ways in: pushing a v-tag builds for that tag, and the button on the Actions page builds
+# for whichever existing tag you name. The second one is what you want when a release is
+# already out and only one platform is missing from it.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The existing release tag to attach the build to
+        required: true
+
+jobs:
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: launcher/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+        working-directory: launcher
+
+      # The key is read at compile time; a build without the secret is Modrinth only, which is
+      # a smaller catalogue rather than a failure, so this does not gate the build.
+      - run: pnpm tauri build
+        working-directory: launcher
+        env:
+          UNIFIEDMC_CF_KEY: ${{ secrets.UNIFIEDMC_CF_KEY }}
+
+      - name: Attach the installers to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          tag="${{ inputs.tag || github.ref_name }}"
+          # WiX writes an .msi, NSIS an .exe. Both are wanted: the msi for anyone deploying it,
+          # the exe for a person who just wants to double-click something.
+          files=$(find launcher/src-tauri/target/release/bundle -type f \
+            \( -name '*.msi' -o -name '*-setup.exe' \))
+          test -n "$files" || { echo "nothing was bundled"; exit 1; }
+          echo "$files"
+          gh release upload "$tag" $files --clobber
