@@ -33,8 +33,7 @@
 			launcher.tab === "search" && launcher.kind !== "mod"
 				? "mods.hint.searchClient"
 				: `mods.hint.${launcher.tab}`;
-		const thin = launcher.tab === "search" && !launcher.settings.curseforge_key;
-		return t(key) + (thin ? ` ${t("mods.modrinthOnly")}` : "");
+		return t(key);
 	});
 
 	/**

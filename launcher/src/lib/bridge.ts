@@ -49,8 +49,8 @@ function sample(command: string, args: Record<string, unknown>): unknown {
 					{ id: "4", name: "Vanilla Survival", address: "play.example.net", loader: null, minecraft: null }
 				],
 				settings: {
-					language: "system", memory: 0, offline_name: "Player", manifest_port: 25673,
-					keep_open: true, curseforge_key: "", jvm_profile: "balanced", jvm_args: ""
+					language: "system", memory: 0, offline_name: "Player",
+					keep_open: true, jvm_profile: "balanced", jvm_args: ""
 				},
 				session: { name: "EJTP", uuid: "0", kind: "microsoft" },
 				unknown_server_icon: null

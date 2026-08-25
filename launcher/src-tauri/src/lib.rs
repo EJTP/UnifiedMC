@@ -310,7 +310,6 @@ fn remove_server(id: String) -> Result<Vec<SavedServer>, String> {
 #[tauri::command]
 async fn probe(state: State<'_, App>, id: String, address: String) -> Result<ServerStatus, String> {
     let client = state.client.clone();
-    let settings = Settings::load();
 
     let (host, port) = servers::split_address(&address);
 
@@ -355,9 +354,7 @@ async fn probe(state: State<'_, App>, id: String, address: String) -> Result<Ser
             .and_then(|p| p.get("max"))
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as u32,
-        manifest: match servers::manifest(&client, &host, port, settings.manifest_port, &status)
-            .await
-        {
+        manifest: match servers::manifest(&client, &host, port, &status).await {
             Some(published) => Some(published),
             // Nothing published: show what the player chose to run here instead, so the row
             // says "1.21.1 fabric" rather than looking like an unsupported server.
@@ -392,19 +389,10 @@ async fn served(state: &State<'_, App>, address: &str) -> Result<(Manifest, Stri
         return Ok((manifest, instances::key(instance)));
     }
 
-    let settings = Settings::load();
     let (host, port) = servers::split_address(address);
     let status = servers::ping(&host, port).await.map_err(failed)?;
 
-    let manifest = match servers::manifest(
-        &state.client,
-        &host,
-        port,
-        settings.manifest_port,
-        &status,
-    )
-    .await
-    {
+    let manifest = match servers::manifest(&state.client, &host, port, &status).await {
         Some(published) => published,
         // A Vanilla, Paper or proxy server publishes nothing, and that is precisely the server
         // where a player wants this screen: there is no pack to conflict with, so everything
@@ -591,22 +579,21 @@ async fn play(
     play::report(&app, "progress.probe", &address, 0, 0);
     let status = servers::ping(&host, port).await.map_err(failed)?;
 
-    let manifest =
-        match servers::manifest(&client, &host, port, settings.manifest_port, &status).await {
-            Some(published) => published,
-            None => {
-                // A Vanilla or Paper server publishes nothing, which is not a problem - it just
-                // means the mods come from the player's profile rather than from the server.
-                let id = servers::load()
-                    .into_iter()
-                    .find(|s| s.address == address)
-                    .map(|s| s.id)
-                    .unwrap_or_default();
-                chosen_manifest(&state, &id, &status)
-                    .await
-                    .ok_or_else(|| "error.serverNoVersion".to_string())?
-            }
-        };
+    let manifest = match servers::manifest(&client, &host, port, &status).await {
+        Some(published) => published,
+        None => {
+            // A Vanilla or Paper server publishes nothing, which is not a problem - it just
+            // means the mods come from the player's profile rather than from the server.
+            let id = servers::load()
+                .into_iter()
+                .find(|s| s.address == address)
+                .map(|s| s.id)
+                .unwrap_or_default();
+            chosen_manifest(&state, &id, &status)
+                .await
+                .ok_or_else(|| "error.serverNoVersion".to_string())?
+        }
+    };
 
     let key = servers::instance_key(&address, &manifest);
     play::run(app, client, key, Some(address), manifest, settings, session)
@@ -637,7 +624,6 @@ async fn mods(
     offset: usize,
 ) -> Result<Vec<catalogue::Hit>, String> {
     let client = state.client.clone();
-    let settings = Settings::load();
     let (manifest, key) = served(&state, &address).await?;
     let dir = kind.dir();
 
@@ -672,7 +658,7 @@ async fn mods(
         _ => {
             let catalogue = catalogue::Catalogue {
                 client: &client,
-                cf_key: &settings::curseforge_key(&settings),
+                cf_key: settings::curseforge_key(),
             };
             let mut hits = catalogue
                 .search(
@@ -716,7 +702,6 @@ async fn install_mods(
     ids: Vec<String>,
 ) -> Result<Vec<String>, String> {
     let client = state.client.clone();
-    let settings = Settings::load();
     let (manifest, key) = served(&state, &address).await?;
 
     // Rule 4, enforced where it counts. Hiding a tab is a hint to whoever is looking at the
@@ -727,7 +712,7 @@ async fn install_mods(
 
     let catalogue = catalogue::Catalogue {
         client: &client,
-        cf_key: &settings::curseforge_key(&settings),
+        cf_key: settings::curseforge_key(),
     };
     let resolved = catalogue
         .resolve(&manifest, kind, &ids)

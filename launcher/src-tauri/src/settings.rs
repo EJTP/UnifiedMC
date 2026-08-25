@@ -13,12 +13,8 @@ pub struct Settings {
     pub memory: u64,
     /// Used when no signed-in session is available.
     pub offline_name: String,
-    /// Port the server-side mod publishes its manifest on.
-    pub manifest_port: u16,
     /// Closing the launcher while the game runs is usually not what anyone meant.
     pub keep_open: bool,
-    /// Without one the catalogue is Modrinth only - no error, just fewer results.
-    pub curseforge_key: String,
     /// "balanced", "throughput", or anything else for the JVM's own defaults.
     pub jvm_profile: String,
     /// Only used when jvm_profile is "custom".
@@ -32,9 +28,7 @@ impl Default for Settings {
         Self {
             memory: 0,
             offline_name: "Player".into(),
-            manifest_port: 25566,
             keep_open: true,
-            curseforge_key: String::new(),
             jvm_profile: "balanced".into(),
             jvm_args: String::new(),
             language: "system".into(),
@@ -79,13 +73,8 @@ impl Settings {
 /// revoke rather than pretending a desktop application can keep a secret.
 const BUILT_IN_CURSEFORGE_KEY: Option<&str> = option_env!("UNIFIEDMC_CF_KEY");
 
-/// The player's own key wins: they may have one with limits ours does not have, and a key
-/// they typed in themselves is a choice we should not quietly override.
-pub fn curseforge_key(settings: &Settings) -> String {
-    if !settings.curseforge_key.trim().is_empty() {
-        return settings.curseforge_key.trim().to_string();
-    }
-    BUILT_IN_CURSEFORGE_KEY.unwrap_or_default().to_string()
+pub fn curseforge_key() -> &'static str {
+    BUILT_IN_CURSEFORGE_KEY.unwrap_or_default()
 }
 
 /// How much memory this machine has, so a picker cannot offer more than exists.
@@ -167,30 +156,6 @@ fn total_memory_mb() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_typed_key_wins_over_the_one_built_in() {
-        let mine = Settings {
-            curseforge_key: "  typed-by-hand  ".into(),
-            ..Default::default()
-        };
-        assert_eq!(
-            curseforge_key(&mine),
-            "typed-by-hand",
-            "trimmed, and preferred"
-        );
-
-        // Whitespace is not a key; a settings file with a stray space must still fall through
-        // to the build's own, or the catalogue silently loses half its results.
-        let blank = Settings {
-            curseforge_key: "   ".into(),
-            ..Default::default()
-        };
-        assert_eq!(
-            curseforge_key(&blank),
-            BUILT_IN_CURSEFORGE_KEY.unwrap_or_default()
-        );
-    }
 
     #[test]
     fn a_profile_is_flags_and_custom_is_whatever_was_typed() {

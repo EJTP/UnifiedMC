@@ -21,7 +21,6 @@
 	/** The preview is a convenience; when the command refuses, the box has to say so. */
 	let flagsFailed = $state(false);
 	/** Held as text: a number input reports NaN while it is empty, and NaN in the field reads as broken. */
-	let port = $state("");
 	/** The size the slider stands on, kept while Auto is on so switching back returns to it. */
 	let heap = $state(4096);
 	let tab = $state("general");
@@ -30,7 +29,6 @@
 		if (!open) return;
 		draft = { ...launcher.settings };
 		tab = "general";
-		port = String(launcher.settings.manifest_port);
 		heap = launcher.settings.memory || 4096;
 		void call<number>("machine_memory")
 			.then((mb) => {
@@ -116,17 +114,9 @@
 	 */
 	const autoMb = $derived(Number(flags.find((f) => f.startsWith("-Xmx"))?.match(/\d+/)?.[0] ?? 0));
 
-	const portValue = $derived(Number(port));
-	const portValid = $derived(
-		port.trim() !== "" && Number.isInteger(portValue) && portValue >= 1 && portValue <= 65535
-	);
 
 	async function save() {
-		if (!portValid) {
-			tab = "advanced";
-			return;
-		}
-		await launcher.saveSettings({ ...$state.snapshot(draft), manifest_port: portValue });
+		await launcher.saveSettings($state.snapshot(draft));
 		open = false;
 	}
 </script>
@@ -150,7 +140,6 @@
 			<Tabs.List class="w-full">
 				<Tabs.Trigger value="general">{t("settings.tab.general")}</Tabs.Trigger>
 				<Tabs.Trigger value="java">{t("settings.tab.java")}</Tabs.Trigger>
-				<Tabs.Trigger value="advanced">{t("settings.tab.advanced")}</Tabs.Trigger>
 			</Tabs.List>
 
 			<Tabs.Content value="general" class="min-h-0 space-y-4 overflow-y-auto py-2 -mr-[10px] [scrollbar-gutter:stable]">
@@ -191,6 +180,19 @@
 						onCheckedChange={(next) => (draft.keep_open = next)}
 					/>
 				</div>
+							{#if dataDir}
+					<div class="space-y-2">
+						<label for="settings-data-dir" class="block text-sm font-medium">
+							{t("settings.dataDir")}
+						</label>
+						<Input
+							id="settings-data-dir"
+							value={dataDir}
+							readonly
+							class="font-mono text-xs text-muted-foreground"
+						/>
+					</div>
+				{/if}
 			</Tabs.Content>
 
 			<Tabs.Content value="java" class="min-h-0 space-y-4 overflow-y-auto py-2 -mr-[10px] [scrollbar-gutter:stable]">
@@ -291,58 +293,6 @@
 						{#if auto}{" "}{t("settings.flagsAutoHint")}{/if}
 					</p>
 				</div>
-			</Tabs.Content>
-
-			<Tabs.Content value="advanced" class="min-h-0 space-y-4 overflow-y-auto py-2 -mr-[10px] [scrollbar-gutter:stable]">
-				<div class="space-y-2">
-					<label for="settings-manifest-port" class="block text-sm font-medium">
-						{t("settings.manifestPort")}
-					</label>
-					<Input
-						id="settings-manifest-port"
-						type="number"
-						min={1}
-						max={65535}
-						bind:value={port}
-						aria-invalid={!portValid}
-						aria-describedby="settings-manifest-port-hint"
-						class="font-mono"
-					/>
-					{#if !portValid}
-						<p class="text-xs break-words text-destructive">{t("settings.manifestPortInvalid")}</p>
-					{/if}
-					<p id="settings-manifest-port-hint" class="text-xs break-words text-muted-foreground">
-						{t("settings.manifestPortHint")}
-					</p>
-				</div>
-
-				<div class="space-y-2">
-					<label for="settings-curseforge-key" class="block text-sm font-medium">
-						{t("settings.curseforgeKey")}
-					</label>
-					<Input
-						id="settings-curseforge-key"
-						type="password"
-						autocomplete="off"
-						bind:value={draft.curseforge_key}
-						class="font-mono"
-					/>
-					<p class="text-xs text-muted-foreground">{t("settings.curseforgeKeyHint")}</p>
-				</div>
-
-				{#if dataDir}
-					<div class="space-y-2">
-						<label for="settings-data-dir" class="block text-sm font-medium">
-							{t("settings.dataDir")}
-						</label>
-						<Input
-							id="settings-data-dir"
-							value={dataDir}
-							readonly
-							class="font-mono text-xs text-muted-foreground"
-						/>
-					</div>
-				{/if}
 			</Tabs.Content>
 		</Tabs.Root>
 

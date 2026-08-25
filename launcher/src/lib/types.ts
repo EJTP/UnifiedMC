@@ -61,9 +61,7 @@ export interface Settings {
 	language: "system" | "de" | "en";
 	memory: number;
 	offline_name: string;
-	manifest_port: number;
 	keep_open: boolean;
-	curseforge_key: string;
 	jvm_profile: string;
 	jvm_args: string;
 }

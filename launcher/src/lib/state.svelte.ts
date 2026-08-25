@@ -39,9 +39,7 @@ class LauncherState {
 		language: "system",
 		memory: 0,
 		offline_name: "Player",
-		manifest_port: 25566,
 		keep_open: true,
-		curseforge_key: "",
 		jvm_profile: "balanced",
 		jvm_args: ""
 	});

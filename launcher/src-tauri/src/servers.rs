@@ -295,12 +295,18 @@ pub fn plain_motd(value: &serde_json::Value) -> String {
     }
 }
 
+/// Where the server mod listens when it is not sharing the game port.
+///
+/// Was a setting, and never usefully changed: the mod answers HTTP on the game port, which is
+/// the only port most hosting hands out. This is the fallback for the case that path is closed
+/// - a proxy in front of the game port that drops what it does not recognise.
+pub const MANIFEST_PORT: u16 = 25566;
+
 /// What the server needs client-side, cheapest source first.
 pub async fn manifest(
     client: &reqwest::Client,
     host: &str,
     port: u16,
-    manifest_port: u16,
     status: &serde_json::Value,
 ) -> Option<Manifest> {
     // Where the server actually listens, not what the player typed: a SRV record is the whole
@@ -315,8 +321,8 @@ pub async fn manifest(
     // nothing but the address they already typed. Hosting that hands out one port is the
     // normal case, not the exception, and a second port was never something to ask for.
     let mut candidates = vec![port];
-    if manifest_port != 0 && manifest_port != port {
-        candidates.push(manifest_port);
+    if MANIFEST_PORT != port {
+        candidates.push(MANIFEST_PORT);
     }
 
     for candidate in candidates {

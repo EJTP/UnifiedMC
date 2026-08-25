@@ -131,7 +131,6 @@ export default {
 	"mods.installedNone": "Nichts installiert — nichts davon passt zu dieser Version.",
 	"mods.removedCount": "{count} entfernt",
 	"mods.removedNone": "Nichts entfernt",
-	"mods.modrinthOnly": "Ohne CurseForge-Key nur Modrinth — Key unter Einstellungen › Erweitert.",
 	"mods.restricted": "Der Server liefert sein eigenes Pack aus — hinzufügen kannst du nur: {kinds}.",
 
 	/* ----------------------------------------------------------------- skin. */
@@ -156,7 +155,6 @@ export default {
 	"settings.title": "Einstellungen",
 	"settings.tab.general": "Allgemein",
 	"settings.tab.java": "Java",
-	"settings.tab.advanced": "Erweitert",
 	"settings.language": "Sprache",
 	"settings.languageSystem": "Wie das System",
 	"settings.offlineName": "Name ohne Anmeldung",
@@ -185,12 +183,6 @@ export default {
 	"settings.flagsAutoHint":
 		"In Auto wächst der Heap mit der Zahl der Mods; hier steht der Wert für ein Pack ohne Mods.",
 	"settings.customArgs": "Eigene Flags",
-	"settings.manifestPort": "Manifest-Port",
-	"settings.manifestPortInvalid": "Port zwischen 1 und 65535.",
-	"settings.manifestPortHint":
-		"Auf diesem Port fragt der Launcher den Server nach seinem Manifest. Muss zum Server-Mod passen.",
-	"settings.curseforgeKey": "CurseForge-Key",
-	"settings.curseforgeKeyHint": "Ohne Key durchsucht der Katalog nur Modrinth.",
 	"settings.dataDir": "Datenverzeichnis",
 
 	/* ------------------------------------------------------------- progress. */
