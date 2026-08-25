@@ -2626,7 +2626,7 @@ dependencies = [
 
 [[package]]
 name = "launcher"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -2638,6 +2638,7 @@ dependencies = [
  "hex",
  "hickory-resolver",
  "image",
+ "libc",
  "lyceris",
  "md5",
  "reqwest 0.13.4",
@@ -2649,6 +2650,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tokio",
  "toml 1.1.4+spec-1.1.0",
+ "windows-sys 0.59.0",
  "zip 8.6.0",
 ]
 

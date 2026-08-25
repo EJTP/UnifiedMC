@@ -139,6 +139,40 @@ fn total_memory_mb() -> u64 {
             }
         }
     }
+
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+
+        let mut status: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
+        status.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+        // SAFETY: dwLength is the struct's own size, which is the whole contract of this call.
+        if unsafe { GlobalMemoryStatusEx(&mut status) } != 0 {
+            return status.ullTotalPhys / (1024 * 1024);
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let mut bytes: u64 = 0;
+        let mut size = std::mem::size_of::<u64>();
+        // SAFETY: hw.memsize is a u64, and size says how much room the answer has.
+        let read = unsafe {
+            libc::sysctlbyname(
+                c"hw.memsize".as_ptr(),
+                (&mut bytes as *mut u64).cast(),
+                &mut size,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        if read == 0 && bytes > 0 {
+            return bytes / (1024 * 1024);
+        }
+    }
+
+    // Every platform has its own way of being asked, and this is what is left when the answer
+    // does not come. Small on purpose: a machine that cannot say is not one to hand 16 GB to.
     8192
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "launcher"
-version = "0.1.6"
+version = "0.1.7"
 description = "A launcher for one modded Minecraft server"
 authors = ["EJTP"]
 license = "MIT"
@@ -58,3 +58,9 @@ image = { version = "0.25.10", default-features = false, features = ["png"] }
 # offers none - RandomState is a hash seed, not a source of credentials
 getrandom = "0.3"
 
+# Already in the tree under tauri; named here so this crate may call them directly.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_System_SystemInformation"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
