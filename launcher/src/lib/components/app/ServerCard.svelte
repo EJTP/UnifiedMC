@@ -58,6 +58,14 @@
 
 	/** No other row may start while one is starting; the overlay covers the list either way. */
 	const blocked = $derived(Boolean(launcher.playing) && !busy);
+
+	/**
+	 * A pack states its own version and loader, so there is nothing here to override: the
+	 * setup dialog exists for the servers that announce neither - Vanilla, Paper, a proxy that
+	 * reports the oldest protocol it accepts. Offering it on a pack server offers a choice
+	 * that would be ignored, which is worse than not offering it.
+	 */
+	const prescribed = $derived((manifest?.mods.length ?? 0) > 0);
 </script>
 
 <article
@@ -140,16 +148,21 @@
 			<Trash2 class="size-4" />
 		</Button>
 
-		<Button
-			variant="ghost"
-			size="icon"
-			class="text-muted-foreground hover:text-foreground"
-			onclick={onsetup}
-			title={t("servers.setup")}
-			aria-label={t("servers.action.setup", { name: server.name })}
-		>
-			<Cog class="size-4" />
-		</Button>
+		{#if !prescribed}
+			<Button
+				variant="ghost"
+				size="icon"
+				class="text-muted-foreground hover:text-foreground"
+				onclick={onsetup}
+				title={t("servers.setup")}
+				aria-label={t("servers.action.setup", { name: server.name })}
+			>
+				<Cog class="size-4" />
+			</Button>
+		{:else}
+			<!-- The gap stays, so a pack row and a vanilla row keep the same action geometry. -->
+			<div class="size-8 shrink-0" aria-hidden="true"></div>
+		{/if}
 
 		<!--
 			Wherever there is a manifest to install against, loader or not: resource packs, shaders
