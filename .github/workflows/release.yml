@@ -43,6 +43,14 @@ jobs:
         env:
           UNIFIEDMC_CF_KEY: ${{ secrets.UNIFIEDMC_CF_KEY }}
 
+      # The CLI is a second binary out of the same crate: it turns a modpack into a server
+      # directory, which is the other half of this project and useless if you have to build it
+      # yourself first.
+      - run: cargo build --release --bin unifiedmc-server-cli
+        working-directory: launcher/src-tauri
+        env:
+          UNIFIEDMC_CF_KEY: ${{ secrets.UNIFIEDMC_CF_KEY }}
+
       - name: Attach the installers to the release
         shell: bash
         env:
@@ -54,6 +62,8 @@ jobs:
           # the exe for a person who just wants to double-click something.
           files=$(find launcher/src-tauri/target/release/bundle -type f \
             \( -name '*.msi' -o -name '*-setup.exe' \))
+          cli=launcher/src-tauri/target/release/unifiedmc-server-cli.exe
+          test -f "$cli" && files="$files $cli"
           test -n "$files" || { echo "nothing was bundled"; exit 1; }
           echo "$files"
           gh release upload "$tag" $files --clobber
