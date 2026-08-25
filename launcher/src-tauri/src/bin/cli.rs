@@ -217,18 +217,7 @@ async fn init(
         }
 
         // config for the server, mods split by which side loads them
-        let target = match (file.side, file.path.starts_with("mods/")) {
-            // strip_prefix, not trim_start_matches: that one strips repeatedly, so
-            // "mods/mods/x.jar" would come out as "x.jar"
-            (Side::ClientOnly, true) => root
-                .join("unifiedmc/client")
-                .join(file.path.strip_prefix("mods/").unwrap_or(&file.path)),
-            // client-config/ mirrors config/, so the prefix must not be repeated inside it
-            (Side::ClientOnly, false) => root
-                .join("unifiedmc/client-config")
-                .join(file.path.strip_prefix("config/").unwrap_or(&file.path)),
-            (_, _) => root.join(&file.path),
-        };
+        let target = root.join(place(&file.path, file.side));
 
         if pack::is_private(&file.path) {
             continue; // backups and per-world state are nobody else's business
@@ -450,6 +439,47 @@ async fn report(response: reqwest::Response) -> Result<()> {
         ));
     }
     Err(anyhow!("{status}: {body}"))
+}
+
+/// Where a file out of a pack belongs on a server.
+///
+/// A pack is written for a client, so its directories are the client's: `resourcepacks/` and
+/// `shaderpacks/` mean nothing to a server and everything to the player. Those go straight into
+/// the areas the publisher hands out, or they end up somewhere the server merely stores them and
+/// nobody ever gets them - which is what used to happen: a resource pack landed in the config
+/// area and reached players as a config file, in a directory where a resource pack does nothing.
+///
+/// strip_prefix, not trim_start_matches: that one strips repeatedly, so "mods/mods/x.jar" would
+/// come out as "x.jar".
+fn place(path: &str, side: Side) -> PathBuf {
+    let under = |prefix: &str| path.strip_prefix(prefix).unwrap_or(path).to_string();
+
+    // Client-side by definition, whatever the pack says about sides: no server loads either.
+    if let Some(rest) = path.strip_prefix("resourcepacks/") {
+        return PathBuf::from("unifiedmc/client-resourcepacks").join(rest);
+    }
+    if let Some(rest) = path.strip_prefix("shaderpacks/") {
+        return PathBuf::from("unifiedmc/client-shaders").join(rest);
+    }
+    // A datapack is world data. The server's own live in the world directory and it applies
+    // them itself; one a pack marks client-only is for the player's own copy of the world.
+    for prefix in ["datapacks/", "world/datapacks/"] {
+        if let Some(rest) = path.strip_prefix(prefix) {
+            return match side {
+                Side::ClientOnly => PathBuf::from("unifiedmc/client-datapacks").join(rest),
+                _ => PathBuf::from("world/datapacks").join(rest),
+            };
+        }
+    }
+
+    match (side, path.starts_with("mods/")) {
+        (Side::ClientOnly, true) => PathBuf::from("unifiedmc/client").join(under("mods/")),
+        // client-config/ mirrors config/, so the prefix must not be repeated inside it
+        (Side::ClientOnly, false) => {
+            PathBuf::from("unifiedmc/client-config").join(under("config/"))
+        }
+        (_, _) => PathBuf::from(path),
+    }
 }
 
 /// The pieces a directory of mods is not: a loader, a server jar, the two files Minecraft
@@ -679,6 +709,55 @@ async fn fetch_json_field(client: &reqwest::Client, url: &str, field: &str) -> O
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_pack_is_sorted_into_the_areas_the_publisher_hands_out() {
+        let at = |path: &str, side| {
+            super::place(path, side)
+                .to_string_lossy()
+                .replace('\\', "/")
+        };
+
+        // The regression: a resource pack used to land in the config area, which delivered it
+        // to players as a config file - into config/resourcepacks/, where it does nothing.
+        assert_eq!(
+            at("resourcepacks/Fresh.zip", Side::ClientOnly),
+            "unifiedmc/client-resourcepacks/Fresh.zip"
+        );
+        assert_eq!(
+            at("shaderpacks/BSL.zip", Side::Both),
+            "unifiedmc/client-shaders/BSL.zip",
+            "no server loads a shader, whatever the pack says about sides"
+        );
+
+        // World data: the server's own stay where it applies them, a client-only one is for
+        // the player's own copy of the world.
+        assert_eq!(
+            at("datapacks/vanilla-tweaks.zip", Side::Both),
+            "world/datapacks/vanilla-tweaks.zip"
+        );
+        assert_eq!(
+            at("world/datapacks/extra.zip", Side::ClientOnly),
+            "unifiedmc/client-datapacks/extra.zip"
+        );
+
+        // And what was already right stays right.
+        assert_eq!(
+            at("mods/sodium.jar", Side::ClientOnly),
+            "unifiedmc/client/sodium.jar"
+        );
+        assert_eq!(at("mods/create.jar", Side::Both), "mods/create.jar");
+        assert_eq!(
+            at("config/sodium.json", Side::ClientOnly),
+            "unifiedmc/client-config/sodium.json"
+        );
+        assert_eq!(at("config/create.toml", Side::Both), "config/create.toml");
+        // the prefix is stripped once, not repeatedly
+        assert_eq!(
+            at("mods/mods/odd.jar", Side::ClientOnly),
+            "unifiedmc/client/mods/odd.jar"
+        );
+    }
     use super::*;
 
     #[test]
