@@ -37,7 +37,7 @@
 			<button
 				type="button"
 				aria-current={active ? "page" : undefined}
-				onclick={() => (launcher.view = item.id)}
+				onclick={() => launcher.show(item.id)}
 				class={cn(
 					"flex items-center gap-2.5 rounded-md px-2 py-2 text-sm outline-none transition-colors duration-150",
 					"focus-visible:ring-3 focus-visible:ring-ring/50",

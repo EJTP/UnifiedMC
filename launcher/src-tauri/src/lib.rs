@@ -369,12 +369,53 @@ async fn probe(state: State<'_, App>, id: String, address: String) -> Result<Ser
 /// Ping a server and read its manifest, plus the key naming the instance and the profile that
 /// belongs to it. Every command the mod browser has starts exactly this way.
 async fn served(state: &State<'_, App>, address: &str) -> Result<(Manifest, String), String> {
+    // An instance is not an address. The browser addresses one as "instance-<id>" because the
+    // two halves of this screen are otherwise identical - but there is nothing on the other end
+    // to ping, and resolving it as a hostname is how this used to fail: "failed to lookup
+    // address information", for a profile sitting on the local disk.
+    if let Some(id) = address.strip_prefix("instance-") {
+        let list = instances::load();
+        let instance = list
+            .iter()
+            .find(|entry| entry.id == id)
+            .ok_or_else(|| "error.noSuchInstance".to_string())?;
+        let manifest = servers::manifest_for_choice(
+            instance.minecraft.clone(),
+            instance.loader.as_deref().and_then(loader_of),
+        );
+        return Ok((manifest, instances::key(instance)));
+    }
+
     let settings = Settings::load();
     let (host, port) = servers::split_address(address);
     let status = servers::ping(&host, port).await.map_err(failed)?;
-    let manifest = servers::manifest(&state.client, &host, port, settings.manifest_port, &status)
-        .await
-        .ok_or_else(|| "error.noManifest".to_string())?;
+
+    let manifest = match servers::manifest(
+        &state.client,
+        &host,
+        port,
+        settings.manifest_port,
+        &status,
+    )
+    .await
+    {
+        Some(published) => published,
+        // A Vanilla, Paper or proxy server publishes nothing, and that is precisely the server
+        // where a player wants this screen: there is no pack to conflict with, so everything
+        // client-side is theirs to add. Falling back to what they chose for it - the same
+        // manifest the row already shows - is what makes the browser reachable there at all.
+        None => {
+            let id = servers::load()
+                .into_iter()
+                .find(|saved| saved.address == address)
+                .map(|saved| saved.id)
+                .unwrap_or_default();
+            chosen_manifest(state, &id, &status)
+                .await
+                .ok_or_else(|| "error.noManifest".to_string())?
+        }
+    };
+
     let key = servers::instance_key(address, &manifest);
     Ok((manifest, key))
 }

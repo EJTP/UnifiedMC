@@ -211,6 +211,7 @@ export default {
 	"error.noAddress": "Keine Adresse angegeben",
 	"error.noVersionChosen": "Keine Version gewählt",
 	"error.serverNoVersion": "Der Server ist erreichbar, sagt aber nicht welche Version er läuft.",
+	"error.serverClosedConnection": "Der Server hat die Verbindung geschlossen, ohne zu antworten. Große Netzwerke drosseln Status-Abfragen — kurz warten und erneut prüfen.",
 	"error.noManifest": "Der Server veröffentlicht kein Manifest.",
 	"error.noSuchServer": "Diesen Server gibt es nicht mehr.",
 	"error.noSuchInstance": "Diese Instanz gibt es nicht mehr.",

@@ -97,6 +97,18 @@ class LauncherState {
 			.finally(() => (this.booted = true));
 	}
 
+	/**
+	 * Switch halves.
+	 *
+	 * The mod browser draws over whichever list is behind it, so leaving it open across a
+	 * switch means pressing "Servers" and still looking at an instance's mods - the nav says
+	 * one thing and the screen shows another.
+	 */
+	show(view: View) {
+		this.view = view;
+		if (this.browsing) this.closeMods();
+	}
+
 	/** Ask about every server at once. A slow one must not hold up the rest of the list. */
 	probeAll() {
 		for (const server of this.servers) {

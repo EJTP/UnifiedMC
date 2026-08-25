@@ -1,6 +1,6 @@
 [package]
 name = "launcher"
-version = "0.1.0"
+version = "0.1.1"
 description = "A launcher for one modded Minecraft server"
 authors = ["EJTP"]
 license = "MIT"

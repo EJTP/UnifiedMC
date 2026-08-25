@@ -253,9 +253,24 @@ pub async fn ping(host: &str, port: u16) -> Result<serde_json::Value> {
         stream.read_exact(&mut body).await?;
         Ok(serde_json::from_slice(&body)?)
     };
-    tokio::time::timeout(Duration::from_secs(5), read)
+    match tokio::time::timeout(Duration::from_secs(5), read)
         .await
         .context("server stopped answering")?
+    {
+        Ok(status) => Ok(status),
+        // Connected, asked, and got nothing back. A big network rate-limits status pings and
+        // hangs up on the ones over the line, which is not the same as being unreachable -
+        // and telling a player "unreachable" about a server that is plainly up reads as a bug
+        // in the launcher.
+        Err(error) if closed_early(&error) => Err(anyhow!("error.serverClosedConnection")),
+        Err(error) => Err(error),
+    }
+}
+
+fn closed_early(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<std::io::Error>()
+        .is_some_and(|io| io.kind() == std::io::ErrorKind::UnexpectedEof)
 }
 
 /// Server descriptions are a chat component tree; a list row only wants the words.

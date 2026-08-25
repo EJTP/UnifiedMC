@@ -208,6 +208,7 @@ export default {
 	"error.noAddress": "No address given",
 	"error.noVersionChosen": "No version chosen",
 	"error.serverNoVersion": "The server answers, but does not say which version it runs.",
+	"error.serverClosedConnection": "The server closed the connection without answering. Big networks throttle status pings — wait a moment and check again.",
 	"error.noManifest": "The server publishes no manifest.",
 	"error.noSuchServer": "That server is gone.",
 	"error.noSuchInstance": "That instance is gone.",
