@@ -1,12 +1,7 @@
-//! Signing in with a Microsoft account, as ourselves.
+//! Signing in with a Microsoft account.
 //!
-//! Four hops, and every one of them is required: Microsoft says who the person is, Xbox Live
-//! turns that into an Xbox identity, XSTS authorises that identity for Minecraft, and only
-//! then does Minecraft hand out the token the game actually launches with.
-//!
-//! The device code flow, not a redirect: it needs no local web server, no custom URI scheme
-//! registered with the desktop, and it works when the browser is on a different machine than
-//! the launcher - which is the case whenever somebody runs this over a remote session.
+//! Microsoft -> Xbox Live -> XSTS -> Minecraft, in that order. Device code flow, so no local
+//! web server and no URI scheme has to be registered.
 
 use std::fs;
 use std::time::Duration;
@@ -17,16 +12,11 @@ use serde::{Deserialize, Serialize};
 use crate::paths;
 use crate::session::Session;
 
-/// Our own application, approved by Mojang for this launcher.
-///
-/// A device-code client is a public client: it has no secret, because a desktop binary cannot
-/// keep one. The id is an identifier, not a credential - it says which application is asking,
-/// and Microsoft still refuses everything until a human approves it in their browser. Forks
-/// set their own rather than borrowing ours.
+/// Our own application, approved by Mojang. A device-code client has no secret; the id only
+/// says which application is asking. Forks set their own.
 const CLIENT_ID: &str = "439957e7-a0fb-4363-9d45-a9bde08a3349";
 
-/// Only what is needed to prove an Xbox identity, plus the refresh token that keeps the
-/// player signed in. Asking for more would be asking for what we do not use.
+/// Enough to prove an Xbox identity, plus the refresh token.
 const SCOPE: &str = "XboxLive.signin offline_access";
 
 const DEVICE_CODE_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode";
@@ -52,10 +42,7 @@ pub struct Prompt {
     pub expires_in: u64,
 }
 
-/// The signed-in account, on disk between runs.
-///
-/// The refresh token is the part worth protecting: it buys new Minecraft tokens without the
-/// player doing anything. The file is written 0600 for that reason.
+/// The signed-in account, on disk between runs. The refresh token is why the file is 0600.
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 struct Account {
     name: String,
@@ -83,8 +70,7 @@ fn store(account: &Account) -> Result<()> {
     }
     fs::write(&file, serde_json::to_vec_pretty(account)?)?;
 
-    // The refresh token in here is worth more than the settings next to it: anyone who reads
-    // it can mint Minecraft tokens for this account until it is revoked.
+    // Anyone who reads this can mint Minecraft tokens until it is revoked.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -124,9 +110,7 @@ pub async fn begin(client: &reqwest::Client) -> Result<(Prompt, String)> {
 }
 
 /// Wait for the player to finish in their browser, then walk the rest of the chain.
-///
-/// Microsoft answers `authorization_pending` until they do, which is not an error - it is the
-/// normal state of this endpoint for as long as somebody is still typing.
+/// `authorization_pending` is the normal answer until they do, not an error.
 pub async fn finish(
     client: &reqwest::Client,
     device_code: &str,
@@ -175,9 +159,8 @@ pub async fn finish(
     Ok(session_of(&account))
 }
 
-/// Refresh token -> Microsoft token -> Xbox -> XSTS -> Minecraft -> profile.
-///
-/// Kept as one function because every step feeds the next and none of them is useful alone.
+/// Refresh token -> Microsoft -> Xbox -> XSTS -> Minecraft -> profile. One function because
+/// every step feeds the next.
 async fn exchange(client: &reqwest::Client, refresh_token: &str) -> Result<Account> {
     let refreshed: serde_json::Value = client
         .post(TOKEN_URL)
@@ -233,8 +216,7 @@ async fn exchange(client: &reqwest::Client, refresh_token: &str) -> Result<Accou
         .send()
         .await?;
 
-    // XSTS says why it refused in a number, and the two common reasons are worth naming: an
-    // account that has never opened Xbox, and a child account without a family.
+    // XSTS states the reason as a number; two of them are worth naming.
     if !xsts_answer.status().is_success() {
         let body: serde_json::Value = xsts_answer.json().await.unwrap_or_default();
         return Err(anyhow!(match body.get("XErr").and_then(|v| v.as_u64()) {
@@ -260,8 +242,7 @@ async fn exchange(client: &reqwest::Client, refresh_token: &str) -> Result<Accou
 
     let minecraft_token = string(&minecraft, "access_token")?;
 
-    // A Microsoft account that does not own the game authenticates perfectly well and then
-    // has no profile. Saying "you do not own Minecraft" beats a blank name.
+    // An account without the game authenticates fine and then has no profile.
     let profile_answer = client
         .get(PROFILE_URL)
         .bearer_auth(&minecraft_token)
@@ -284,9 +265,8 @@ async fn exchange(client: &reqwest::Client, refresh_token: &str) -> Result<Accou
     })
 }
 
-/// The signed-in session, refreshed if the stored token has run out. None if nobody is
-/// signed in, or if the refresh no longer works - in which case the stored account is
-/// dropped, because keeping it would mean showing a name that cannot play.
+/// The signed-in session, refreshed if the stored token ran out. None if nobody is signed in;
+/// a refresh that no longer works drops the account rather than showing a name that cannot play.
 pub async fn session(client: &reqwest::Client) -> Option<Session> {
     let stored = load()?;
     if !stored.minecraft_token.is_empty() && !crate::session::expired(&stored.minecraft_token) {
@@ -324,8 +304,7 @@ fn string(value: &serde_json::Value, key: &str) -> Result<String> {
         .ok_or_else(|| anyhow!("no {key} in the answer"))
 }
 
-/// Xbox returns the user hash buried one array deep, and the Minecraft login needs it beside
-/// the token or it answers 401 with nothing to go on.
+/// Xbox buries the user hash one array deep; the Minecraft login needs it beside the token.
 fn user_hash(xbox: &serde_json::Value) -> Result<String> {
     xbox.get("DisplayClaims")
         .and_then(|c| c.get("xui"))

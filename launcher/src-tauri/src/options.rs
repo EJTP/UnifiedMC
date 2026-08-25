@@ -1,12 +1,5 @@
-//! Sharing Minecraft's own settings between instances.
-//!
-//! One instance per server means one options.txt per server - so every new server starts with
-//! default keybindings, default render distance, default everything. Nobody wants to set their
-//! controls up again because they joined somewhere else.
-//!
-//! Most of that file is about the player. A few lines are about the instance, and those have
-//! to stay where they are: resourcePacks names packs that exist in one game directory and
-//! nowhere else, and lastServer is about one server by definition.
+//! Sharing Minecraft's own settings between instances, so a new server does not start with
+//! default keybindings and full volume.
 
 use std::collections::BTreeMap;
 use std::path::Path;

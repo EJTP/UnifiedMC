@@ -10,12 +10,7 @@ export const LOCALES: { id: Locale; label: string }[] = [
 
 const dicts: Record<Locale, Record<string, string>> = { de, en };
 
-/**
- * The language the window is drawn in.
- *
- * An object rather than a bare value: an exported `$state` binding cannot be reassigned from
- * outside the module, but a property on one can - so every screen sees the change.
- */
+/** The language the window is drawn in. An object, because an exported `$state` cannot be reassigned. */
 export const locale = $state<{ current: Locale }>({ current: "de" });
 
 /** Whether the German dict - the one that defines the key inventory - knows this key. */
@@ -32,10 +27,8 @@ export function t(key: string, vars?: Record<string, string | number>): string {
 }
 
 /**
- * What the backend sent, in the player's language when it named a key.
- *
- * Rust reports progress phases and its own refusals as dotted keys; anything from a library
- * arrives as raw English and has to survive untouched.
+ * What the backend sent, in the player's language when it named a key. Rust reports progress
+ * phases and its own errors as dotted keys; anything else is shown as it came.
  */
 export function translate(text: string): string {
 	return has(text) ? t(text) : text;

@@ -27,13 +27,11 @@ use settings::Settings;
 /// One page of catalogue results. Large enough that the side filter still leaves a screenful.
 const PAGE: usize = 40;
 
-/// Rule 4: what a player may add on top of what this server ships.
+/// What a player may add on top of what this server ships.
 ///
-/// A server with its own pack owns the world's data, so its datapacks are the one category a
-/// player may not pile onto: the server applies its own, and a client copy is world data
-/// nobody agreed to. Everything else on offer is client-side by definition - a resource pack
-/// or a shader cannot reach the server, and the catalogue already drops any mod whose server
-/// side is required. A server that ships no pack has no pack to break, so all four are theirs.
+/// A pack owns the world's data, so datapacks are the one category that cannot be piled onto
+/// it. The rest is client-side: a pack or shader cannot reach the server, and the catalogue
+/// already drops a mod whose server side is required. No pack, no pack to break - all four.
 fn allowed(manifest: &Manifest) -> Vec<Kind> {
     catalogue::KINDS
         .into_iter()
@@ -55,13 +53,11 @@ struct Bootstrap {
     servers: Vec<SavedServer>,
     settings: Settings,
     session: Session,
-    /// Minecraft's own placeholder, read from the copy on this machine. None until a version
-    /// has been installed, which is exactly when there is nothing to show anyway.
+    /// Minecraft's own placeholder. None until a version is installed.
     unknown_server_icon: Option<String>,
 }
 
-/// The player's face. Its own command because it needs the network, and the window should
-/// not wait on Mojang before it draws anything.
+/// The player's face. Its own command so the window need not wait on Mojang.
 #[tauri::command]
 async fn player_head(state: State<'_, App>) -> Result<Option<String>, String> {
     let settings = Settings::load();
@@ -104,11 +100,8 @@ fn add_server(name: String, address: String) -> Result<Vec<SavedServer>, String>
     Ok(list)
 }
 
-/// What the player wants this instance to be: which Minecraft, which loader.
-///
-/// Both are corrections to what was detected. A proxy answers with the oldest protocol it
-/// accepts - Hypixel says 1.8.9 and takes 1.21 - and a Paper server announces no loader at
-/// all even though client-side mods run against it perfectly well.
+/// What the player wants this instance to be. Both are corrections to detection: a proxy
+/// answers with the oldest protocol it accepts, and a Paper server announces no loader.
 #[tauri::command]
 async fn configure(
     state: State<'_, App>,
@@ -119,8 +112,7 @@ async fn configure(
     let minecraft = minecraft.filter(|v| !v.is_empty());
     let loader = loader.filter(|l| !l.is_empty() && l != "vanilla");
 
-    // Resolve before storing, so a combination that cannot be installed fails here rather
-    // than halfway through a launch.
+    // Resolved before storing, so an impossible combination fails here and not mid-launch.
     if let Some(name) = loader.as_deref() {
         let kind = loaders::Kind::parse(name).ok_or_else(|| "error.unknownLoader".to_string())?;
         let version = match minecraft.clone() {
@@ -174,8 +166,7 @@ async fn add_instance(
     // empty means "whatever is newest at launch", which is not the same as a pinned build
     let loader_version = loader_version.filter(|v| !v.is_empty());
 
-    // Check the combination exists before writing it down, so an impossible one fails here
-    // and not halfway through a launch.
+    // Checked before writing it down, so an impossible combination fails here.
     if let Some(name) = loader.as_deref() {
         let kind = loaders::Kind::parse(name).ok_or_else(|| "error.unknownLoader".to_string())?;
         loaders::latest(&state.client, kind, &minecraft)
@@ -356,26 +347,21 @@ async fn probe(state: State<'_, App>, id: String, address: String) -> Result<Ser
             .unwrap_or(0) as u32,
         manifest: match servers::manifest(&client, &host, port, &status).await {
             Some(published) => Some(published),
-            // Nothing published: show what the player chose to run here instead, so the row
-            // says "1.21.1 fabric" rather than looking like an unsupported server.
+            // Nothing published: show what the player chose, so the row reads "1.21.1 fabric".
             None => chosen_manifest(&state, &lookup, &status).await,
         },
     })
 }
 
-/// Ping a server and read its manifest, plus the key naming the instance and the profile that
-/// belongs to it. Every command the mod browser has starts exactly this way.
-/// The browser addresses an instance as "instance-<id>", because both halves of that screen
-/// are otherwise the same component. Everything that has to tell the two apart asks here.
+/// Ping a server, read its manifest, and name the instance and profile that belong to it.
+/// Every command the mod browser has starts here.
 fn instance_id(address: &str) -> Option<&str> {
     address.strip_prefix("instance-")
 }
 
 async fn served(state: &State<'_, App>, address: &str) -> Result<(Manifest, String), String> {
-    // An instance is not an address. The browser addresses one as "instance-<id>" because the
-    // two halves of this screen are otherwise identical - but there is nothing on the other end
-    // to ping, and resolving it as a hostname is how this used to fail: "failed to lookup
-    // address information", for a profile sitting on the local disk.
+    // An instance is not an address. "instance-<id>" resolved as a hostname is how this failed:
+    // a DNS error about a profile on the local disk.
     if let Some(id) = instance_id(address) {
         let list = instances::load();
         let instance = list
@@ -394,10 +380,8 @@ async fn served(state: &State<'_, App>, address: &str) -> Result<(Manifest, Stri
 
     let manifest = match servers::manifest(&state.client, &host, port, &status).await {
         Some(published) => published,
-        // A Vanilla, Paper or proxy server publishes nothing, and that is precisely the server
-        // where a player wants this screen: there is no pack to conflict with, so everything
-        // client-side is theirs to add. Falling back to what they chose for it - the same
-        // manifest the row already shows - is what makes the browser reachable there at all.
+        // A server that publishes no pack is exactly where this screen is wanted - nothing to
+        // conflict with. Falling back to the player's own choice is what makes it reachable.
         None => {
             let id = servers::load()
                 .into_iter()
@@ -525,16 +509,14 @@ async fn play(
     app: AppHandle,
     state: State<'_, App>,
     address: String,
-    // an instance to join with, instead of the setup the server prescribes: the player's own
-    // mods come along, and the server never sees them
+    // an instance to join with instead of the server's own setup: the player's mods come along
     instance: Option<String>,
 ) -> Result<(), String> {
     let client = state.client.clone();
     let settings = Settings::load();
     let session = session::current(&state.client, &settings.offline_name).await;
 
-    // Joining with a player's own instance: their profile decides what runs, and the server
-    // only decides where to connect.
+    // The instance decides what runs; the server only decides where to connect.
     if let Some(id) = instance.filter(|id| !id.is_empty()) {
         let list = instances::load();
         let chosen = list
@@ -582,8 +564,7 @@ async fn play(
     let manifest = match servers::manifest(&client, &host, port, &status).await {
         Some(published) => published,
         None => {
-            // A Vanilla or Paper server publishes nothing, which is not a problem - it just
-            // means the mods come from the player's profile rather than from the server.
+            // A Vanilla or Paper server publishes nothing; the mods come from the player's profile.
             let id = servers::load()
                 .into_iter()
                 .find(|s| s.address == address)
@@ -632,9 +613,8 @@ async fn mods(
             .entries(dir)
             .iter()
             .map(|entry| {
-                // the jar in the blob store knows its own name and icon; the filename is a
-                // last resort, not a label. The sha1 is the server's text, so it names a blob
-                // or it names nothing - read() on a directory that does not exist is a None.
+                // The jar knows its own name and icon; the filename is a last resort. A sha1 out of the
+                // manifest names a blob or nothing at all.
                 let blob = if sync::is_hash(&entry.sha1) {
                     paths::blobs().join(&entry.sha1)
                 } else {
@@ -672,9 +652,7 @@ async fn mods(
                 .await
                 .map_err(failed)?;
 
-            // Mark what the player already has, or the catalogue offers them a mod they
-            // installed ten minutes ago as though nothing happened. Only mods: a mod jar
-            // declares an id to match on, and a resource pack zip declares nothing at all.
+            // Mark what the player already has. Mods only: a jar declares an id, a pack zip does not.
             let mine = match dir {
                 "mods" => installed_ids(&paths::profiles().join(&key).join(dir)),
                 _ => Vec::new(),
@@ -682,8 +660,7 @@ async fn mods(
             for hit in &mut hits {
                 let declared = hit.title.to_lowercase();
                 hit.installed = mine.iter().any(|id| {
-                    // a jar declares a mod id; a catalogue entry has a slug and a title, and
-                    // the two agree often enough to be worth checking both ways
+                    // a jar declares a mod id, a catalogue entry a slug and a title; both are worth checking
                     hit.id.trim_start_matches("cf:") == id
                         || hit.id == *id
                         || declared.replace(' ', "") == id.replace('-', "")
@@ -704,8 +681,7 @@ async fn install_mods(
     let client = state.client.clone();
     let (manifest, key) = served(&state, &address).await?;
 
-    // Rule 4, enforced where it counts. Hiding a tab is a hint to whoever is looking at the
-    // screen; this is the answer to anyone who asks the command directly.
+    // Enforced here, not just by hiding a tab: a tab is a hint, this answers the command.
     if !allowed(&manifest).contains(&kind) {
         return Err("error.kindNotAllowed".into());
     }
@@ -720,8 +696,8 @@ async fn install_mods(
         .map_err(failed)?;
 
     let profile = paths::profiles().join(&key).join(kind.dir());
-    // add, not sync: the profile is the player's own directory, and reconciling it against one
-    // catalogue answer would delete every mod they installed before this one
+    // add, not sync: reconciling the player's own folder against one answer would delete the
+    // rest of what they installed
     sync::add(&client, &resolved, &profile)
         .await
         .map_err(failed)?;
@@ -755,19 +731,16 @@ async fn remove_mods(
 
 /// Put a new skin on the player's Minecraft profile.
 ///
-/// The bytes arrive base64-encoded because a `<input type="file">` in the webview is the whole
-/// file picker, and that is one dependency nobody has to install. Only a real Microsoft session
-/// carries the token this needs, so an offline profile is told so here rather than watching a
-/// request fail for reasons it cannot see.
+/// Base64 because `<input type="file">` is the whole file picker. Needs a Microsoft session,
+/// so an offline profile is told rather than watching the request fail.
 #[tauri::command]
 async fn set_skin(state: State<'_, App>, png_base64: String, slim: bool) -> Result<(), String> {
     let session = session::current(&state.client, &Settings::load().offline_name).await;
     if !session.is_online() {
         return Err("error.skinNeedsMicrosoft".into());
     }
-    // before the decode, not after it: whatever the webview passed is already a string, and
-    // turning half a gigabyte of it into a Vec only to have check() refuse it is the expensive
-    // half of the same answer
+    // Checked before the decode: the webview already passed a string, and decoding half a
+    // gigabyte only to refuse it is the expensive half of the same answer.
     let png_base64 = png_base64.trim();
     if skin::too_much_base64(png_base64) {
         return Err("error.skinTooBig".into());
@@ -799,11 +772,8 @@ fn data_dir() -> String {
     paths::data().to_string_lossy().into_owned()
 }
 
-/// Sign in as ourselves, with the device code flow.
-///
-/// One command rather than a start/poll pair: the pair would have to park the device code
-/// somewhere between the two calls, and that code is the thing an attacker would want. Here it
-/// never leaves this function - the window only ever sees the short code the player types.
+/// Sign in with the device code flow. One command, not a start/poll pair: the pair would have
+/// to park the device code between calls, and that code is what an attacker would want.
 #[tauri::command]
 async fn sign_in(app: AppHandle, state: State<'_, App>) -> Result<Session, String> {
     let (prompt, device_code) = auth::begin(&state.client).await.map_err(failed)?;
@@ -816,8 +786,7 @@ async fn sign_in(app: AppHandle, state: State<'_, App>) -> Result<Session, Strin
         .map_err(failed)
 }
 
-/// Forget the account. The offline profile is what is left, which is a real answer: it still
-/// reaches every server running in offline mode.
+/// Forget the account. The offline profile is left, which still reaches offline-mode servers.
 #[tauri::command]
 fn sign_out() -> Session {
     auth::forget();
@@ -853,9 +822,8 @@ pub fn run() {
         .manage(App {
             client: reqwest::Client::builder()
                 .user_agent(concat!("UnifiedMC/", env!("CARGO_PKG_VERSION")))
-                // reqwest has no default timeout of any kind, and a launch has no cancel
-                // button: one url that trickles a byte a minute is a progress overlay that
-                // never ends. Generous enough for a 400 MB pack on a bad line.
+                // reqwest has no default timeout, and a launch has no cancel button. Generous enough for a
+                // 400 MB pack on a bad line.
                 .timeout(std::time::Duration::from_secs(300))
                 .connect_timeout(std::time::Duration::from_secs(10))
                 .build()

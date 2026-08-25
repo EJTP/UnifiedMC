@@ -1,11 +1,7 @@
-//! Picking a mod loader for a server that does not run one.
+//! Picking a mod loader for a server that announces none.
 //!
-//! A Paper or Vanilla server announces no loader, so on its own the launcher would start plain
-//! Minecraft - and plain Minecraft loads no mods at all. But a client-side mod does not need
-//! the server to know about it: Sodium, Iris, a minimap and a chat tweak all run against a
-//! Vanilla server perfectly well, because the server never sees them.
-//!
-//! So the player chooses. This works out which version of that choice to install.
+//! Client-side mods run against a Vanilla or Paper server perfectly well - the server never
+//! sees them - so the player chooses, and this resolves that choice to a version.
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
@@ -46,10 +42,8 @@ impl Kind {
 /// Fabric alone lists 250+ loader builds; nobody scrolls that far.
 const LIMIT: usize = 50;
 
-/// Every build of `kind` usable with this Minecraft version, newest first.
-///
-/// Each project publishes this somewhere different, and none of them agree on a format - so
-/// this is two small readers rather than one clever one.
+/// Every build of `kind` for this Minecraft version, newest first. Two readers, because the
+/// projects publish this in two different formats.
 pub async fn versions(
     client: &reqwest::Client,
     kind: Kind,

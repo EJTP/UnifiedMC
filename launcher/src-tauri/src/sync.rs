@@ -14,19 +14,14 @@ use crate::servers::{ConfigEntry, ModEntry};
 const PARALLEL_DOWNLOADS: usize = 8;
 
 /// Every string in a manifest is written by whoever answered on that port, and `Path::join`
-/// reads "../.." and "/home/you/.bashrc" as directions rather than as text. These three say
-/// what a manifest may name, and everything that turns manifest text into a path goes through
-/// one of them.
-///
-/// A name addresses a file inside a directory we chose. Never a path.
+/// reads "../.." as a direction. These three say what a manifest may name, and everything that
+/// turns manifest text into a path goes through one of them.
 pub fn plain_name(name: &str) -> bool {
     Path::new(name).file_name().is_some_and(|f| f == name)
 }
 
-/// A relative path inside a directory we chose: no root, no `..`, no drive letter.
-///
-/// `is_absolute()` is not enough on Windows, where `C:x` and `\Windows\x` are neither absolute
-/// nor harmless - `PathBuf::push` replaces the whole path with either of them.
+/// A relative path inside a directory we chose. `is_absolute()` is not enough on Windows,
+/// where `PathBuf::push` replaces the whole path with `C:x` or `\Windows\x`.
 pub fn plain_relative(path: &str) -> bool {
     let path = Path::new(path);
     !path.as_os_str().is_empty() && path.components().all(|c| matches!(c, Component::Normal(_)))
@@ -37,11 +32,8 @@ pub fn is_hash(sha1: &str) -> bool {
     sha1.len() == 40 && sha1.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-/// Whether the blob store already holds this file.
-///
-/// The hash check lives in `download`, so a sha1 that is not a hash must never look present
-/// here - answering "yes" about `../../.ssh/id_rsa` is how an unverified file gets linked into
-/// an instance without a single byte being fetched.
+/// Whether the blob store already holds this file. The hash check lives in `download`, so a
+/// sha1 that is not a hash must never look present here.
 pub fn have(sha1: &str) -> bool {
     is_hash(sha1) && paths::blobs().join(sha1).is_file()
 }
@@ -62,10 +54,8 @@ pub fn hash_file(path: &Path) -> Result<String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-/// Fetch into the shared blob store, verified by hash so a truncated file never sticks.
-///
-/// The hash catches a truncated or corrupted download, not a substituted one: it arrives on the
-/// same unauthenticated channel as the bytes, so anyone able to rewrite one rewrites both.
+/// Fetch into the blob store, verified by hash. Catches a truncated download, not a
+/// substituted one: the hash arrives on the same unauthenticated channel as the bytes.
 async fn download(client: &reqwest::Client, entry: &ModEntry) -> Result<()> {
     if entry.url.is_empty() {
         return Err(anyhow!("{}: not stored locally and no url", entry.name));
@@ -97,10 +87,8 @@ pub struct SyncReport {
     pub downloaded: usize,
 }
 
-/// What the manifest asks for, minus anything whose name or hash is not one.
-///
-/// One filter for all three loops below - download, delete and link have to agree on the set,
-/// or the delete loop starts removing what the link loop is about to write.
+/// What the manifest asks for, minus anything whose name or hash is not one. One filter for
+/// all three loops, or the delete loop removes what the link loop is about to write.
 fn wanted(mods: &[ModEntry]) -> HashMap<&str, &str> {
     mods.iter()
         .filter(|m| plain_name(&m.name) && is_hash(&m.sha1))
@@ -113,8 +101,7 @@ async fn fetch<F>(client: &reqwest::Client, mods: &[ModEntry], mut progress: F) 
 where
     F: FnMut(usize, usize, &str) + Send,
 {
-    // owned, not borrowed: a reference living inside the futures makes the whole stream
-    // higher-ranked, and the command it ends up in stops being nameable
+    // owned, not borrowed: a reference inside the futures makes the stream higher-ranked
     let missing: Vec<ModEntry> = mods
         .iter()
         .filter(|m| plain_name(&m.name) && is_hash(&m.sha1) && !have(&m.sha1))
@@ -150,14 +137,10 @@ fn link_all(entries: &[ModEntry], dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Make `dir` contain exactly `entries`, downloading only what is missing.
+/// Make `dir` contain exactly `entries`, fetching only what is missing.
 ///
-/// Mods, datapacks, resource packs and shaders are the same job in four directories: fetch by
-/// hash, hard link into place, drop whatever the manifest stopped naming. Nothing about it was
-/// ever specific to a jar, so the directory is the only argument that differs.
-///
-/// Only for a directory the launcher owns - an instance the server dictates. A directory the
-/// player fills is `add()`'s job, because reconciling one deletes everything they put there.
+/// The same job for mods, datapacks, resource packs and shaders - only the directory differs.
+/// Only for a directory the launcher owns; one the player fills is `add()`'s job.
 pub async fn into_dir<F>(
     client: &reqwest::Client,
     entries: &[ModEntry],
@@ -192,8 +175,8 @@ where
 
 /// Put these files in a directory, and leave everything else in it alone.
 ///
-/// The player's own profile is not ours to reconcile: installing one mod from the browser must
-/// not take away the nine they installed last week.
+/// The player's own profile is not ours to reconcile: installing one mod must not take away
+/// the nine from last week.
 pub async fn add(client: &reqwest::Client, entries: &[ModEntry], dir: &Path) -> Result<()> {
     fetch(client, entries, |_, _, _| {}).await?;
     fs::create_dir_all(dir)?;
@@ -217,12 +200,9 @@ fn link(from: &Path, to: &Path) -> Result<()> {
 
 /// Write the server's config into the instance.
 ///
-/// A file is replaced only when the server's copy changed since it was last delivered.
-/// Otherwise whatever changed it locally keeps it - the player, or the mod itself, and many
-/// rewrite their own config on shutdown. Files the pack marks `force` win regardless.
-///
-/// Copied rather than linked: config is meant to be edited, and editing a link would write
-/// the change back into the shared store for every other server.
+/// Replaced only when the server's copy changed since it was last delivered; otherwise whatever
+/// changed it locally keeps it. Files marked `force` win regardless. Copied, not linked -
+/// editing a link would write the change back into the shared store.
 pub async fn config(
     client: &reqwest::Client,
     entries: &[ConfigEntry],
@@ -282,10 +262,7 @@ pub async fn config(
 }
 
 /// What the player put in one of their own folders, minus anything the server already ships.
-///
-/// The folder is passed in whole rather than built from a profile: a mod is a jar, a resource
-/// pack and a shader are zips, and a datapack is either - so the extension says nothing worth
-/// filtering on, and a plain "is it a file" is the only test that holds for all four.
+/// The folder is passed in whole: a mod is a jar, a pack a zip, a datapack either.
 pub fn personal(served: &[ModEntry], folder: &Path) -> Vec<PathBuf> {
     let served: HashSet<&str> = served.iter().map(|m| m.sha1.as_str()).collect();
 
@@ -341,8 +318,7 @@ mod tests {
         for hostile in ["", "..", "../../.ssh/authorized_keys", "/etc/passwd"] {
             assert!(!plain_relative(hostile), "accepted {hostile:?}");
         }
-        // drive-relative and root-relative are neither absolute nor harmless on Windows;
-        // components() is the predicate that catches them on the platform they matter on
+        // drive- and root-relative are neither absolute nor harmless on Windows
         #[cfg(windows)]
         for hostile in ["C:evil", r"\Windows\System32\x", r"\\server\share\x"] {
             assert!(!plain_relative(hostile), "accepted {hostile:?}");
@@ -358,8 +334,7 @@ mod tests {
         assert!(!is_hash(""));
         assert!(!is_hash("da39a3ee"));
 
-        // the one that matters: have() must not answer yes about a file outside the store, or
-        // download() - the only place a hash is ever checked - never runs at all
+        // have() must not answer yes about a file outside the store, or download() never runs
         assert!(!have("../../.ssh/id_rsa"));
         assert!(!have("/etc/passwd"));
     }
@@ -390,8 +365,7 @@ mod tests {
 
     #[test]
     fn nothing_a_manifest_names_can_land_outside_the_target_directory() {
-        // the same filter now guards four directories instead of one, and a resource pack is
-        // named by a human, so spaces and brackets have to survive it
+        // a resource pack is named by a human, so spaces and brackets have to survive
         let named = |name: &str| ModEntry {
             name: name.into(),
             sha1: "da39a3ee5e6b4b0d3255bfef95601890afd80709".into(),
@@ -408,8 +382,7 @@ mod tests {
         assert_eq!(kept.len(), 1);
         assert!(kept.contains_key("Faithful 32x [1.21].zip"));
 
-        // the invariant the join in link_all depends on: whatever survives is a child of the
-        // directory we chose, and of nothing else
+        // the invariant link_all's join depends on: whatever survives is a child of our directory
         let target = Path::new("/home/player/.unifiedmc/instances/x/resourcepacks");
         for name in kept.keys() {
             assert_eq!(target.join(name).parent(), Some(target), "{name} escaped");

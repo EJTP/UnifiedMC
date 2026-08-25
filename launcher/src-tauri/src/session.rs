@@ -1,16 +1,8 @@
-//! Who the game launches as.
+//! Who the game launches as: our own signed-in account, a session another launcher handed
+//! over in `session.json`, or an offline profile that only reaches offline-mode servers.
 //!
-//! Three sources, in order:
-//!
-//! 1. Our own signed-in account - see `auth.rs`. Mojang approved the application, so the
-//!    launcher asks for its own tokens rather than borrowing anyone's.
-//! 2. `~/.unifiedmc/session.json`, handed over by a launcher that is already signed in.
-//!    Kept because it costs nothing and still works for anyone set up that way.
-//! 3. An offline profile, which only reaches offline-mode servers.
-//!
-//! Deliberately not lyceris' own Microsoft flow: it is hardcoded to the official launcher's
-//! client id, and presenting ourselves as that application is exactly what the approval
-//! rules out.
+//! Deliberately not lyceris' Microsoft flow - it is hardcoded to the official launcher's
+//! client id, which is exactly what our approval rules out.
 
 use std::fs;
 
@@ -23,9 +15,7 @@ use crate::paths;
 pub struct Session {
     pub name: String,
     pub uuid: String,
-    /// Never serialised: this struct is handed to the webview, which has no use for the token
-    /// and every reason not to hold Minecraft's credentials in a JS heap for a whole session.
-    /// Only `play.rs` reads it, in Rust, on the way to the game's own argv.
+    /// Never serialised: the webview has no use for the token. Only `play.rs` reads it.
     #[serde(default, skip_serializing)]
     pub token: String,
     /// "microsoft" or "offline" - the UI says which, because it changes where you can play.
@@ -48,10 +38,8 @@ impl Session {
     }
 }
 
-/// Who to launch as, refreshing our own token when it has run out.
-///
-/// Async because the refresh is a network call. Everything that starts a game needs the
-/// answer to be current, and a stale token fails at the server with nothing to explain it.
+/// Who to launch as, refreshing our own token when it has run out. Async because the refresh
+/// is a network call, and a stale token fails at the server with nothing to explain it.
 pub async fn current(client: &reqwest::Client, offline_name: &str) -> Session {
     if let Some(signed_in) = crate::auth::session(client).await {
         return signed_in;
@@ -79,9 +67,8 @@ fn borrowed() -> Option<Session> {
     })
 }
 
-/// Minecraft access tokens are JWTs. Read `exp` without verifying anything - we are not the
-/// one checking the signature, we only want to say "expired" rather than let a server refuse
-/// the player for no visible reason.
+/// Minecraft tokens are JWTs. `exp` is read without verifying anything - we only want to say
+/// "expired" rather than let a server refuse the player for no visible reason.
 pub(crate) fn expired(token: &str) -> bool {
     let Some(payload) = token.split('.').nth(1) else {
         return false; // unreadable expiry must not block a session that may well work

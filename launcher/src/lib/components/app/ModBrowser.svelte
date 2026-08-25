@@ -20,14 +20,7 @@
 		{ id: "pack", key: "mods.tab.pack" }
 	];
 
-	/**
-	 * What this tab is showing - plus, in the catalogue, which catalogues are actually in it.
-	 * Without a CurseForge key half the world of mods is silently missing, and a player who is
-	 * not told reads that as "the search is broken".
-	 *
-	 * The "runs without a server side" sentence is about mods only: a resource pack or a shader
-	 * is client-side by definition, so saying it there would sound like a filter that is not there.
-	 */
+	/** What this tab is showing. */
 	const hint = $derived.by(() => {
 		const key =
 			launcher.tab === "search" && launcher.kind !== "mod"
@@ -36,10 +29,7 @@
 		return t(key);
 	});
 
-	/**
-	 * Rule 4, said out loud. A category the server does not allow is not offered, and a chooser
-	 * that is quietly one item short reads as a bug rather than as the server's decision.
-	 */
+	/** Said out loud: a chooser quietly one item short reads as a bug, not as the server's decision. */
 	const restricted = $derived(
 		launcher.allowedKinds.length < KINDS.length
 			? t("mods.restricted", {

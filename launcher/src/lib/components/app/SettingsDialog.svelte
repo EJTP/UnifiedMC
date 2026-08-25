@@ -47,21 +47,14 @@
 	const STEP_MB = 512;
 
 	/**
-	 * Only sizes this machine can actually back.
-	 *
-	 * Past physical memory the stalling moves from the garbage collector into the swap file,
-	 * so offering 16 GB on an 8 GB machine offers a worse experience, not a better one. The
-	 * floor keeps one step of travel on a small machine; Rust clamps the value again anyway.
+	 * Only sizes this machine can back. Past physical memory the stalling moves from the garbage
+	 * collector into the swap file.
 	 */
 	function ceiling(mb: number) {
 		return Math.max(MIN_MB + STEP_MB, Math.floor((mb - 2048) / STEP_MB) * STEP_MB);
 	}
 
-	/**
-	 * Never below what is already configured. Until machine_memory answers, this machine looks
-	 * like the smallest one there is - and a slider whose maximum is under its value drags the
-	 * value down to it, quietly turning a stored 8 GB into 2.5 GB.
-	 */
+	/** Never below what is already configured, or the first paint would clamp a real setting. */
 	const maxMb = $derived(Math.max(ceiling(machineMb), heap, draft.memory));
 	const auto = $derived(draft.memory === 0);
 
@@ -85,11 +78,7 @@
 		return mb % 1024 === 0 ? `${mb / 1024}` : (mb / 1024).toFixed(1);
 	}
 
-	/**
-	 * The flags the JVM will really get, from the same Rust code the launch path uses, so a
-	 * profile can never promise something play.rs does not pass. Debounced: dragging the
-	 * slider would otherwise fire one call per step.
-	 */
+	/** The flags the JVM really gets, from the same Rust the launch path uses. */
 	$effect(() => {
 		if (!open) return;
 		const settings = $state.snapshot(draft);
@@ -107,11 +96,7 @@
 		return () => clearTimeout(id);
 	});
 
-	/**
-	 * What Auto settled on, read back off the preview rather than guessed here: `heap` is only
-	 * the position the slider is parked at, and printing that under Auto would put a number on
-	 * screen that the -Xmx three lines below it contradicts.
-	 */
+	/** What Auto settled on, read off the preview: `heap` is only where the slider sits. */
 	const autoMb = $derived(Number(flags.find((f) => f.startsWith("-Xmx"))?.match(/\d+/)?.[0] ?? 0));
 
 

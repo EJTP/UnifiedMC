@@ -1,8 +1,5 @@
-//! What a mod jar says about itself.
-//!
-//! A jar is not an opaque file: it carries a display name, a description, a version and often
-//! an icon. Listing one as its filename throws all of that away and makes a player's own mods
-//! look worse than the catalogue's.
+//! What a mod jar says about itself: display name, description, version, and often an icon.
+//! Listing one by its filename throws all of that away.
 
 use std::io::Read;
 use std::path::Path;
@@ -61,9 +58,8 @@ fn from_toml<R: Read + std::io::Seek>(
     name: &str,
 ) -> Option<ModInfo> {
     let raw = String::from_utf8(entry(archive, name)?).ok()?;
-    // toml::from_str, not raw.parse(): since toml 1.0 the FromStr on Value parses a single
-    // VALUE, so a whole document fails at the first "=" - which silently turned every
-    // NeoForge and Forge jar into a filename with no icon.
+    // toml::from_str, not raw.parse(): since toml 1.0 FromStr on Value parses a single value, so
+    // a whole document fails at the first "=" - which read every mods.toml as nothing.
     let parsed: toml::Value = toml::from_str(&raw).ok()?;
     let first = parsed.get("mods")?.as_array()?.first()?;
 
@@ -132,10 +128,8 @@ fn embed_icon<R: Read + std::io::Seek>(
         return None;
     }
 
-    // Scaled down rather than refused. Mod icons are routinely 512 or 1024 pixels square and
-    // hundreds of kilobytes; the row draws them at forty-odd. Dropping the large ones was why
-    // half a pack listed without a picture, and shipping them whole would put a hundred
-    // megabytes of base64 through the bridge for one screen.
+    // Scaled rather than refused: icons are routinely 512 pixels and hundreds of kilobytes, the
+    // row draws them at forty. Dropping them was half a pack listing without a picture.
     let mut reader = image::ImageReader::new(std::io::Cursor::new(&bytes));
     reader.set_format(image::ImageFormat::Png);
     let mut limits = image::Limits::default();
@@ -165,11 +159,7 @@ fn embed_icon<R: Read + std::io::Seek>(
     ))
 }
 
-/// Minecraft's own placeholder for a server with no icon.
-///
-/// Read out of the client jar the launcher already downloaded from Mojang, rather than shipped
-/// with us: the texture is theirs, and a public repository handing it out is redistributing a
-/// game file. Every player has it legitimately through their own copy - so use that one.
+/// Minecraft's own placeholder for a server with no icon, read from the client jar.
 pub fn unknown_server_icon() -> Option<String> {
     let bytes = read_from_client_jar("assets/minecraft/textures/misc/unknown_server.png")?;
     Some(format!(
@@ -178,10 +168,8 @@ pub fn unknown_server_icon() -> Option<String> {
     ))
 }
 
-/// Read one file out of the client jar this machine already downloaded from Mojang.
-///
-/// Textures are theirs; a public repository handing them out is redistributing a game file.
-/// Every player has them legitimately through their own copy, so use that one.
+/// Read one file out of the client jar this machine already downloaded from Mojang. Textures
+/// are theirs, so a public repository must not hand them out.
 pub fn read_from_client_jar(path: &str) -> Option<Vec<u8>> {
     let versions = crate::paths::minecraft().join("versions");
     let mut newest: Option<std::path::PathBuf> = None;

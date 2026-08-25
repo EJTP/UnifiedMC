@@ -1,8 +1,5 @@
-//! The server-side companion.
-//!
-//! Two jobs: turn a modpack into a server directory, and change a running server without
-//! SFTP. Both share the launcher's pack reader, so "which side is this mod for" is answered
-//! in exactly one place.
+//! The server-side companion: turn a modpack into a server directory, and change a running
+//! server without SFTP. Shares the launcher's pack reader.
 
 use std::path::{Path, PathBuf};
 
@@ -135,11 +132,7 @@ async fn main() -> Result<()> {
     }
 }
 
-/// 32 bytes from the operating system, hex encoded.
-///
-/// Not std's RandomState: that is a hash seed, and four SipHash outputs of the messages 0, 8,
-/// 16, 24 under one thread-local key is not a sentence anyone should have to reason about when
-/// the answer is a credential.
+/// 32 bytes from the operating system, hex encoded. Not std's RandomState: that is a hash seed.
 fn new_token() -> String {
     let mut bytes = [0u8; 32];
     getrandom::fill(&mut bytes).expect("the operating system has no randomness");
@@ -208,9 +201,7 @@ async fn init(
     let mut failed: Vec<(String, String)> = Vec::new();
 
     for file in &pack.files {
-        // A pack is a zip somebody else wrote, and both a member name and an mrpack index
-        // entry are attacker text: "overrides/../../../../.ssh/authorized_keys" survives every
-        // strip_prefix below and lands wherever it likes, as whoever ran this.
+        // A pack is a zip somebody else wrote, and every member name is attacker text.
         if !plain_relative(&file.path) {
             println!("  skipping {} - not a path inside the pack", file.path);
             continue;
@@ -236,9 +227,8 @@ async fn init(
             // end, so the admin sees the whole list rather than one at a time.
             match fetch(&client, url).await {
                 Ok(bytes) => match verify(&bytes, file.sha1.as_deref()) {
-                    // The pack states a hash for a reason: a repointed link or a swapped CDN
-                    // object would otherwise become a jar in mods/, and from there a jar in
-                    // every player's mods/ by way of the manifest.
+                    // The pack states a hash for a reason: a repointed link would otherwise become a jar in
+                    // mods/, and from there a jar in every player's.
                     Ok(()) => std::fs::write(&target, &bytes)?,
                     Err(error) => {
                         failed.push((file.path.clone(), format!("{error}")));
@@ -384,13 +374,8 @@ async fn remote(base: &str, action: &str, query: &[(&str, &str)], token: &str) -
     report(response).await
 }
 
-/// A bare address becomes a url - but never a cleartext one to another machine.
-///
-/// The token authenticates a write endpoint that hard-links a jar into every player's mods
-/// directory, so anyone on the path between here and the host who reads it owns the group. The
-/// mod speaks no TLS, so the answer is a tunnel rather than a scheme:
-///     ssh -L 25566:localhost:25566 you@host
-/// and then push to localhost:25566.
+/// A bare address becomes a url, never a cleartext one to another machine: the token
+/// authenticates a write endpoint, and on http anyone on the path can read it.
 fn base(server: &str, insecure: bool) -> Result<String> {
     let url = if server.starts_with("http://") || server.starts_with("https://") {
         server.trim_end_matches('/').to_string()
@@ -443,14 +428,9 @@ async fn report(response: reqwest::Response) -> Result<()> {
 
 /// Where a file out of a pack belongs on a server.
 ///
-/// A pack is written for a client, so its directories are the client's: `resourcepacks/` and
-/// `shaderpacks/` mean nothing to a server and everything to the player. Those go straight into
-/// the areas the publisher hands out, or they end up somewhere the server merely stores them and
-/// nobody ever gets them - which is what used to happen: a resource pack landed in the config
-/// area and reached players as a config file, in a directory where a resource pack does nothing.
-///
-/// strip_prefix, not trim_start_matches: that one strips repeatedly, so "mods/mods/x.jar" would
-/// come out as "x.jar".
+/// A pack is written for a client, so `resourcepacks/` and `shaderpacks/` mean nothing to a
+/// server and everything to the player. They go into the areas the publisher hands out, or a
+/// resource pack reaches players as a config file.
 fn place(path: &str, side: Side) -> PathBuf {
     let under = |prefix: &str| path.strip_prefix(prefix).unwrap_or(path).to_string();
 
@@ -482,11 +462,8 @@ fn place(path: &str, side: Side) -> PathBuf {
     }
 }
 
-/// The pieces a directory of mods is not: a loader, a server jar, the two files Minecraft
-/// refuses to start without, and something to double-click.
-///
-/// Without this, `init` produced a folder that looked complete and could not be started, and
-/// every person who tried had to go and find the same four things by hand.
+/// What a directory of mods is not: a loader, a server jar, the two files Minecraft refuses to
+/// start without, and something to double-click.
 async fn provision(
     client: &reqwest::Client,
     root: &Path,
@@ -500,12 +477,8 @@ async fn provision(
         .clone()
         .unwrap_or_else(|| ("neoforge".into(), String::new()));
 
-    // 1. The mod that makes this a UnifiedMC server at all - where it can load. It is written
-    //    against NeoForge, and Fabric answers a jar it does not understand with "found 1
-    //    non-fabric mod" and carries on: a server that runs perfectly and provisions nobody.
-    //    Saying so here beats letting somebody find out from a launcher that sees no pack.
-    // Quilt loads the Fabric side of the jar, so it counts. Forge is the one still missing:
-    // its @Mod is in another package, and older versions run with a third set of names.
+    // 1. The mod that makes this a UnifiedMC server. Only where it loads: Fabric answers a jar it
+    //    does not understand with "found 1 non-fabric mod" and carries on.
     let publisher = matches!(loader.as_str(), "neoforge" | "fabric" | "quilt");
     if publisher {
         let mods = root.join("mods");
@@ -655,9 +628,7 @@ async fn install_loader(
             std::fs::write(&installer, &bytes)?;
             println!("  {loader} {version} installer");
 
-            // The installer writes the libraries and a run script; it needs a JVM here. When
-            // there is none, leave it in place with the one command to run - that is still a
-            // long way short of "go and work out which four things to download".
+            // The installer needs a JVM here. Without one it stays in place with the command to run.
             match std::process::Command::new("java")
                 .arg("-jar")
                 .arg("installer.jar")

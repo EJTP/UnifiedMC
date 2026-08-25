@@ -26,10 +26,7 @@ export const KINDS: Kind[] = ["mod", "resourcepack", "shader", "datapack"];
 /** Must match PAGE in the Rust side, or "more" skips or repeats results. */
 const PAGE = 40;
 
-/**
- * Everything the window shows. The backend pushes into this; no screen fetches on its own,
- * so a screen can never be half-populated by its own timing.
- */
+/** Everything the window shows. The backend pushes into this; no screen fetches on its own. */
 class LauncherState {
 	view = $state<View>("servers");
 	servers = $state<SavedServer[]>([]);
@@ -49,20 +46,10 @@ class LauncherState {
 	unknownServerIcon = $state<string | null>(null);
 	/** The player's face, from their skin. Fetched separately so the window draws first. */
 	playerHead = $state<string | null>(null);
-	/**
-	 * The one launch being prepared, if any. Preparing is serial - two at once would fight
-	 * over the same blob store and the same instance directory.
-	 */
+	/** The one launch being prepared. Serial: two at once fight over the same blob store. */
 	playing = $state<string | null>(null);
 
-	/**
-	 * What is actually running, by the id the list shows, and which kind it is.
-	 *
-	 * Minecraft itself allows several windows; a Mojang account allows one SERVER session, and
-	 * the second one is thrown off with "logged in from another location". So servers block
-	 * each other and nothing blocks singleplayer, which is the rule the game already enforces
-	 * rather than one of ours.
-	 */
+		/** The one launch being prepared. Serial: two at once fight over the same blob store. */
 	running = $state<Record<string, "server" | "instance">>({});
 
 	get onAServer() {
@@ -114,11 +101,8 @@ class LauncherState {
 	}
 
 	/**
-	 * Switch halves.
-	 *
-	 * The mod browser draws over whichever list is behind it, so leaving it open across a
-	 * switch means pressing "Servers" and still looking at an instance's mods - the nav says
-	 * one thing and the screen shows another.
+	 * Switch halves. The mod browser draws over the list behind it, so leaving it open would
+	 * mean pressing Servers and still looking at an instance's mods.
 	 */
 	show(view: View) {
 		this.view = view;
@@ -161,10 +145,8 @@ class LauncherState {
 	}
 
 	/**
-	 * Choose a loader for a server that does not run one.
-	 *
-	 * A Vanilla or Paper server announces nothing, so without a choice the instance is plain
-	 * Minecraft and loads no mods. Client-side mods do not need the server to know about them.
+	 * Choose a loader for a server that runs none. Client-side mods do not need the server to
+	 * know about them.
 	 */
 	async configure(server: SavedServer, minecraft: string | null, loader: string | null) {
 		this.error = null;
@@ -233,12 +215,8 @@ class LauncherState {
 	choosing = $state<SavedServer | null>(null);
 
 	/**
-	 * Ask before starting, unless the server has already answered.
-	 *
-	 * A server that publishes a pack has decided what runs, and a dialog there would only ask
-	 * the player to confirm the one possible answer. A server that publishes none - vanilla,
-	 * Paper, anything without the mod - decides nothing, so the question has to be asked even
-	 * when no instance fits yet: creating one is reachable from that dialog and nowhere else.
+	 * Ask before starting, unless the server has already answered. A server that publishes a
+	 * pack has decided what runs; anything else leaves the choice open.
 	 */
 	askThenPlay(server: SavedServer) {
 		if (this.playing || this.running[server.id]) return;
@@ -263,9 +241,8 @@ class LauncherState {
 	}
 
 	/**
-	 * Everything a launch has in common: prepare with the overlay up, drop the overlay the
-	 * moment the game's window appears, and keep the row marked until the game exits - the
-	 * command behind this does not return until then.
+	 * Everything a launch has in common: overlay up while preparing, gone the moment the window
+	 * appears, row marked until the game exits.
 	 */
 	async launch(id: string, kind: "server" | "instance", label: string, start: () => Promise<unknown>) {
 		this.playing = id;
@@ -298,11 +275,7 @@ class LauncherState {
 	browsing = $state<SavedServer | null>(null);
 	tab = $state<Tab>("search");
 	kind = $state<Kind>("mod");
-	/**
-	 * What the server lets a player add on top of what it ships. All four until it says
-	 * otherwise, so a server that never answers is browsable rather than empty - the install
-	 * itself is refused in Rust either way, and that refusal is the one that counts.
-	 */
+	/** What the server lets a player add on top of what it ships. All four until it says otherwise. */
 	allowedKinds = $state<Kind[]>([...KINDS]);
 	hits = $state<Hit[]>([]);
 	picked = $state<Set<string>>(new Set());
@@ -341,7 +314,7 @@ class LauncherState {
 				await this.switchKind(this.allowedKinds[0] ?? "mod");
 			}
 		} catch {
-			// An unreachable server tells us nothing about its rules; leave all four offered.
+		// An unreachable server tells us nothing about its rules; leave all four offered.
 		}
 	}
 
@@ -456,11 +429,8 @@ class LauncherState {
 	}
 
 	/**
-	 * Signing in, and what the player has to do while it waits.
-	 *
-	 * The prompt arrives as an event rather than as the call's return value, because the call
-	 * does not return until they have finished in their browser - which is the whole point of
-	 * the device flow, and would otherwise be several minutes of nothing on screen.
+	 * Signing in, and what the player has to do while it waits. The prompt arrives as an event
+	 * because the call does not return until they have finished in their browser.
 	 */
 	signInPrompt = $state<SignInPrompt | null>(null);
 	signingIn = $state(false);
@@ -496,10 +466,8 @@ class LauncherState {
 	}
 
 	/**
-	 * The skin, from the webview's own file picker.
-	 *
-	 * Both answer with null when it worked and with the reason when it did not, so the dialog
-	 * can show it where the player is looking instead of in the window-wide error bar.
+	 * The skin, from the webview's own file picker. Both answer with null on success and the
+	 * reason otherwise, so the dialog can show it where the player is looking.
 	 */
 	async setSkin(pngBase64: string, slim: boolean): Promise<string | null> {
 		try {
@@ -526,7 +494,7 @@ class LauncherState {
 		try {
 			this.playerHead = await call<string | null>("player_head");
 		} catch {
-			// a stale face is better than none, and the change itself already reported
+		// a stale face is better than none, and the change itself already reported
 		}
 	}
 

@@ -1,8 +1,5 @@
 /**
- * English. Same keys as de.ts, in the same order - a key missing here falls back to German.
- *
- * Written as English, not as a translation of the German: the same thing said the way an
- * English speaker would say it.
+ * English. Same keys as de.ts, in the same order.
  */
 export default {
 	/* ---------------------------------------------------------------- common. */

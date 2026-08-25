@@ -49,11 +49,7 @@
 		return parts.join("  ·  ");
 	});
 
-	/**
-	 * Reachable and with a version to install: a server that publishes no pack is the normal
-	 * case, not a broken one - the version comes from the ping or from the setup dialog, and
-	 * what runs on top of it is the player's answer to give.
-	 */
+	/** Reachable and with a version to install. A server that publishes no pack is normal. */
 	const canPlay = $derived(Boolean(status?.online && manifest));
 
 	/** No other row may start while one is starting; the overlay covers the list either way. */
@@ -63,10 +59,8 @@
 	const live = $derived(Boolean(launcher.running[server.id]));
 
 	/**
-	 * A pack states its own version and loader, so there is nothing here to override: the
-	 * setup dialog exists for the servers that announce neither - Vanilla, Paper, a proxy that
-	 * reports the oldest protocol it accepts. Offering it on a pack server offers a choice
-	 * that would be ignored, which is worse than not offering it.
+	 * A pack states its own version and loader, so there is nothing to override. The setup dialog
+	 * is for servers that announce neither.
 	 */
 	const prescribed = $derived((manifest?.mods.length ?? 0) > 0);
 </script>

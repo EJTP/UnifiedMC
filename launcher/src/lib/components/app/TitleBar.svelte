@@ -4,10 +4,8 @@
 	import { t } from "$lib/i18n.svelte";
 
 	/**
-	 * The window's own bar, because the system one is off.
-	 *
-	 * Everything here is loaded on demand: in a plain browser there is no window to minimise,
-	 * and importing the API at the top would fail the module before the page draws at all.
+	 * The window's own bar, because the system one is off. The API is loaded on demand: in a
+	 * plain browser there is no window to minimise.
 	 */
 	async function window_() {
 		const { getCurrentWindow } = await import("@tauri-apps/api/window");

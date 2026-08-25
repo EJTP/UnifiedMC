@@ -21,10 +21,8 @@
 	});
 
 	/**
-	 * host, host:port or an IPv4, and nothing else.
-	 *
-	 * Deliberately no DNS check: a server that is down right now is still worth saving, and the
-	 * row on the list says whether it answers. This only catches what can never resolve.
+	 * host, host:port or an IPv4. No DNS check: a server that is down right now is still one you
+	 * want in the list.
 	 */
 	const valid = $derived.by(() => {
 		const raw = address.trim();

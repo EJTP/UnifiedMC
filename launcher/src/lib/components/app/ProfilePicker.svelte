@@ -10,11 +10,8 @@
 	import type { SavedServer } from "$lib/types";
 
 	/**
-	 * Which server is being asked about; null closes the dialog.
-	 *
-	 * The open state lives with the caller rather than here. A one-way `open` prop plus a local
-	 * write is the shape that breaks: cancelling sets the local copy false, the prop stays true,
-	 * and the dialog can never be opened for that server again.
+	 * Which server is being asked about; null closes the dialog. The open state lives with the
+	 * caller: a one-way prop plus a local write can never be reopened for the same row.
 	 */
 	let {
 		server,
@@ -55,9 +52,8 @@
 	});
 
 	/**
-	 * A server that runs no loader cares only about the version - client-side mods need no
-	 * server side, so a Fabric instance is welcome on a Paper server. A server that does run
-	 * one would turn away an instance built on a different one.
+	 * A server that runs no loader cares only about the version - client-side mods need no server
+	 * side. One that does would turn away an instance built on another.
 	 */
 	const matching = $derived(
 		version
@@ -69,11 +65,7 @@
 			: []
 	);
 
-	/**
-	 * A server that ships its own pack prescribes the version; there is nothing to choose.
-	 * Anything else - Vanilla, Paper, a proxy - is a version question, and this is the moment
-	 * the player is actually asking it.
-	 */
+	/** A pack prescribes the version. Anything else is a version question, asked here. */
 	const prescribed = $derived((manifest?.mods.length ?? 0) > 0);
 
 	/** Sentinel, never "": bits-ui reads the empty string as "no value" and locks up on it. */
@@ -84,19 +76,13 @@
 		if (open) wanted = server?.minecraft ?? AUTO;
 	});
 
-	/**
-	 * Written straight through, the same way the setup dialog does it: the choice has to be on
-	 * the server before play() reads it back, and re-probing is what refreshes the row behind.
-	 */
+	/** Written straight through: play() reads the choice back off the server. */
 	function chooseVersion(next: string) {
 		wanted = next;
 		if (server) void launcher.configure(server, next === AUTO ? null : next, server.loader);
 	}
 
-	/**
-	 * A freshly created profile stays selectable even when it does not match, because the
-	 * player just built it on purpose and dropping it out of the list would look like a loss.
-	 */
+	/** A freshly created profile stays selectable even when it does not match. */
 	const rows = $derived.by(() => {
 		if (!chosen || matching.some((instance) => instance.id === chosen)) return matching;
 		const extra = launcher.instances.find((instance) => instance.id === chosen);

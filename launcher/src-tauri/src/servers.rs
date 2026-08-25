@@ -17,18 +17,13 @@ pub struct SavedServer {
     /// As the player typed it. Resolved to host and port only when we connect.
     pub address: String,
 
-    /// What the player chose to run here.
-    ///
-    /// A Paper or Vanilla server announces no loader, so without this the instance would be
-    /// plain Minecraft and could load nothing. A client-side mod does not need the server to
-    /// know about it, so the choice is the player's.
+    /// What the player chose to run here. A Paper or Vanilla server announces no loader, and a
+    /// client-side mod does not need it to.
     #[serde(default)]
     pub loader: Option<String>,
 
-    /// Which Minecraft to run, when the player wants something other than what was detected.
-    ///
-    /// A proxy answers with the oldest protocol it accepts - Hypixel says 1.8.9 while happily
-    /// taking 1.21 - so detection alone would pin every player to the oldest option.
+    /// Which Minecraft to run, when detection is wrong. A proxy answers with the oldest protocol
+    /// it accepts - Hypixel says 1.8.9 and takes 1.21.
     #[serde(default)]
     pub minecraft: Option<String>,
 }
@@ -61,8 +56,7 @@ pub struct Manifest {
     pub mods: Vec<ModEntry>,
     #[serde(default)]
     pub config: Vec<ConfigEntry>,
-    /// The world's own data, so a recipe viewer on the client shows the truth and a copy of
-    /// the world opened in singleplayer behaves the same way.
+    /// The world's own data, so a recipe viewer shows the truth.
     #[serde(default)]
     pub datapacks: Vec<ModEntry>,
     #[serde(default)]
@@ -72,11 +66,8 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    /// What the server publishes for one category, addressed by the directory it installs into.
-    ///
-    /// Keyed on the directory rather than on a catalogue Kind so this file stays about what a
-    /// server says, not about where mods are browsed. Note "shaderpacks" holds `shaders`: the
-    /// game's directory and the manifest's field have never been spelled the same way.
+    /// What the server publishes for one category, by the directory it installs into.
+    /// Note "shaderpacks" holds `shaders`: the game's directory and the field never matched.
     pub fn entries(&self, dir: &str) -> &[ModEntry] {
         match dir {
             "mods" => &self.mods,
@@ -177,11 +168,8 @@ fn packet(id: u8, payload: &[u8]) -> Vec<u8> {
 }
 
 /// The vanilla status ping. Returns the server's own JSON.
-/// Where a server actually listens.
-///
-/// Most public addresses are a SRV record pointing elsewhere: hypixel.net answers nothing on
-/// 25565, its record sends you to mc.hypixel.net. Minecraft resolves these, so anyone typing
-/// an address expects it to work. Only for the default port - naming a port means that port.
+/// Where a server actually listens. Most public addresses are a SRV record pointing elsewhere:
+/// hypixel.net answers nothing on 25565. Only for the default port - naming one means that one.
 async fn resolve_srv(host: &str, port: u16) -> Option<(String, u16)> {
     if port != 25565 {
         return None;
@@ -225,8 +213,8 @@ pub async fn ping(host: &str, port: u16) -> Result<serde_json::Value> {
     .context("connection timed out")??;
     let mut stream = stream;
 
-    // the handshake carries the name the player typed, not where SRV sent us: servers use it
-    // for virtual hosting, and rewriting it would reach the wrong one
+    // the handshake carries the name the player typed, not where SRV sent us: servers use it for
+    // virtual hosting
     let mut handshake = Vec::new();
     write_varint(&mut handshake, 0); // protocol 0: we are only asking
     write_varint(&mut handshake, host.len() as u32);
@@ -244,8 +232,7 @@ pub async fn ping(host: &str, port: u16) -> Result<serde_json::Value> {
             return Err(anyhow!("unexpected status packet"));
         }
         let json_length = read_varint(&mut stream).await? as usize;
-        // The length is whatever the other end claims, and five bytes of it ask for 4 GiB.
-        // Vanilla caps a status string at 32767 characters, so a megabyte is already generous.
+        // Five bytes of claimed length ask for 4 GiB; vanilla caps a status at 32767 characters.
         if json_length > 1 << 20 {
             return Err(anyhow!("status packet too large"));
         }
@@ -258,10 +245,8 @@ pub async fn ping(host: &str, port: u16) -> Result<serde_json::Value> {
         .context("server stopped answering")?
     {
         Ok(status) => Ok(status),
-        // Connected, asked, and got nothing back. A big network rate-limits status pings and
-        // hangs up on the ones over the line, which is not the same as being unreachable -
-        // and telling a player "unreachable" about a server that is plainly up reads as a bug
-        // in the launcher.
+        // Connected, asked, got nothing. A big network rate-limits status pings and hangs up, which
+        // is not the same as unreachable.
         Err(error) if closed_early(&error) => Err(anyhow!("error.serverClosedConnection")),
         Err(error) => Err(error),
     }
@@ -295,11 +280,8 @@ pub fn plain_motd(value: &serde_json::Value) -> String {
     }
 }
 
-/// Where the server mod listens when it is not sharing the game port.
-///
-/// Was a setting, and never usefully changed: the mod answers HTTP on the game port, which is
-/// the only port most hosting hands out. This is the fallback for the case that path is closed
-/// - a proxy in front of the game port that drops what it does not recognise.
+/// Where the server mod listens when it is not sharing the game port. Was a setting and never
+/// usefully changed; this is the fallback for a proxy that drops what it does not recognise.
 pub const MANIFEST_PORT: u16 = 25566;
 
 /// What the server needs client-side, cheapest source first.
@@ -309,17 +291,15 @@ pub async fn manifest(
     port: u16,
     status: &serde_json::Value,
 ) -> Option<Manifest> {
-    // Where the server actually listens, not what the player typed: a SRV record is the whole
-    // reason a public address works at all, and asking the typed name for the manifest 404s on
-    // every server that uses one. The ping already resolves it; this has to agree with it.
+    // Where the server actually listens, not what the player typed: asking the typed name 404s on
+    // every server behind a SRV record. This has to agree with the ping.
     let (host, port) = match resolve_srv(host, port).await {
         Some(target) => target,
         None => (host.to_string(), port),
     };
 
-    // The game port first: the server mod answers HTTP there too, so a player needs to know
-    // nothing but the address they already typed. Hosting that hands out one port is the
-    // normal case, not the exception, and a second port was never something to ask for.
+    // The game port first: the mod answers HTTP there too, and hosting that hands out one port is
+    // the normal case.
     let mut candidates = vec![port];
     if MANIFEST_PORT != port {
         candidates.push(MANIFEST_PORT);
@@ -475,12 +455,8 @@ pub fn manifest_for_choice(minecraft: String, loader: Option<Loader>) -> Manifes
     }
 }
 
-/// A directory name, so it stops being a path.
-///
-/// `minecraft` and the loader name come out of the manifest, which the server writes: without
-/// this a version of "../../.." puts the whole instance - options.txt, mods/, config/ - wherever
-/// it likes. A real version ("1.21.1") and a real loader ("fabric") contain none of these, so
-/// no existing directory changes name.
+/// A directory name, so it stops being a path. `minecraft` and the loader come out of the
+/// manifest the server writes, and a version of "../../.." would put the instance anywhere.
 pub fn tame(value: &str) -> String {
     value.replace(['/', '\\', ':'], "_").replace("..", "_")
 }

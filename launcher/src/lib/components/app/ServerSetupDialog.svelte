@@ -7,12 +7,7 @@
 	import { t } from "$lib/i18n.svelte";
 	import type { SavedServer } from "$lib/types";
 
-	/**
-	 * Which server is being set up; null closes the dialog.
-	 *
-	 * The open state lives with the caller, the same way the profile picker does it: a one-way
-	 * `open` prop plus a local write cannot be reopened for the same row a second time.
-	 */
+	/** Which server is being set up; null closes the dialog. Open state lives with the caller. */
 	let {
 		server,
 		onclose
@@ -23,11 +18,7 @@
 
 	const open = $derived(server !== null);
 
-	/**
-	 * Sentinels, never the empty string: bits-ui reads "" as "this select has no value", and an
-	 * item carrying it locks the renderer up the moment the list opens. "vanilla" is also what
-	 * the Rust side already accepts for "no loader".
-	 */
+	/** Sentinels, never "": bits-ui reads the empty string as "no value" and locks up on it. */
 	const AUTO = "auto";
 	const NONE = "vanilla";
 

@@ -5,11 +5,7 @@
 	import { launcher } from "$lib/state.svelte";
 	import { t } from "$lib/i18n.svelte";
 
-	/**
-	 * Open while there is something for the player to do, or something to tell them. The state
-	 * lives on the launcher rather than here: the sign-in is started from the sidebar and can
-	 * outlive any one component that happens to be drawing it.
-	 */
+	/** Open while there is something to do or to say. The state lives on the launcher. */
 	const open = $derived(launcher.signInPrompt !== null || launcher.signInError !== null);
 
 	let copied = $state(false);

@@ -21,9 +21,8 @@ const MAX_UPLOAD: usize = 256 * 1024;
 
 /// The same cap, applied to the base64 the webview sends before anything decodes it.
 ///
-/// `check` is too late to be the only limit: by then a 500 MB file the player picked has
-/// already been read into a string by the webview and expanded back into a Vec here. Base64 is
-/// four characters per three bytes, so this is the longest string that can still be a skin.
+/// `check` is too late to be the only limit: by then the webview has already read the file into
+/// a string. Base64 is four characters per three bytes.
 pub fn too_much_base64(encoded: &str) -> bool {
     encoded.len() > MAX_UPLOAD.div_ceil(3) * 4
 }
@@ -80,8 +79,7 @@ async fn skin_from_mojang(client: &reqwest::Client, uuid: &str) -> Result<Vec<u8
         .to_vec())
 }
 
-/// The default Minecraft would use, read from the client jar rather than shipped with us -
-/// the texture is Mojang's, and every player has it through their own copy.
+/// The default Minecraft would use, read from the client jar - the texture is Mojang's.
 fn default_skin(uuid: &str) -> Option<Vec<u8>> {
     // Minecraft picks between the defaults by a bit of the uuid; close enough to do the same
     let slim = uuid.bytes().map(|b| b as u32).sum::<u32>() % 2 == 0;
@@ -104,8 +102,7 @@ fn default_skin(uuid: &str) -> Option<Vec<u8>> {
     None
 }
 
-/// The head, with the hat layer over it. Nearest-neighbour, because a skin is 64 pixels wide
-/// and smoothing it into a 64 pixel avatar turns it to mush.
+/// The head with the hat layer over it. Nearest-neighbour: a skin is 64 pixels wide.
 fn render(texture: &[u8]) -> Result<String> {
     let skin = image::load(Cursor::new(texture), image::ImageFormat::Png)?.to_rgba8();
     if skin.width() < 64 || skin.height() < 32 {
@@ -153,8 +150,7 @@ pub async fn reset(client: &reqwest::Client, token: &str) -> Result<()> {
     mojang_said(answer).await
 }
 
-/// Changing a skin is an account operation, so an offline profile simply cannot - and being
-/// told that up front beats a 401 from an API the player never knew was involved.
+/// Changing a skin is an account operation, so an offline profile cannot.
 fn signed_in(token: &str) -> Result<&str> {
     match token.trim() {
         "" => Err(anyhow!("error.skinNeedsMicrosoft")),
@@ -163,7 +159,7 @@ fn signed_in(token: &str) -> Result<&str> {
 }
 
 /// What Mojang accepts, checked here so a bad file is a sentence rather than a 400. Only the
-/// header is read: dimensions are all we need, and decoding pixels to reject them is waste.
+/// header is read.
 fn check(png: &[u8]) -> Result<()> {
     if png.len() > MAX_UPLOAD {
         return Err(anyhow!("error.skinTooBig"));
@@ -178,8 +174,8 @@ fn check(png: &[u8]) -> Result<()> {
     }
 }
 
-/// multipart/form-data by hand: reqwest's `multipart` feature is off in Cargo.toml, and two
-/// fields of known content are less code than turning it on. The boundary is random because
+/// multipart/form-data by hand: the `multipart` feature is off, and two known fields are less
+/// code than turning it on. The boundary is random because
 /// the file half is attacker-supplied - a fixed one could be spelled out inside the png and
 /// forge a second field.
 fn form(variant: &str, png: &[u8]) -> (String, Vec<u8>) {

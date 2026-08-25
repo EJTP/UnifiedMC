@@ -1,8 +1,5 @@
-//! Reading a modpack and working out what belongs where.
-//!
-//! Three formats, one answer: which jars the server loads, which ones it only hands to
-//! clients, and which config comes with them. That split is the whole point - a client mod in
-//! a server's `mods/` is how a server dies on startup.
+//! Reading a modpack: which jars the server loads, which it only hands to clients, and what
+//! has to be fetched. Three formats, one answer.
 
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -169,9 +166,8 @@ fn read_mrpack<R: Read + std::io::Seek>(archive: &mut zip::ZipArchive<R>) -> Res
     })
 }
 
-/// CurseForge's client zip: a list of project and file ids that has to be resolved through
-/// their API. Nothing in it says which side a mod is for - that comes later, from the
-/// catalogue, the same way the browser asks.
+// CurseForge's client zip: project and file ids to resolve through their API. Nothing in it
+// says which side a mod is for.
 fn read_curseforge_manifest<R: Read + std::io::Seek>(
     archive: &mut zip::ZipArchive<R>,
 ) -> Result<Pack> {
@@ -332,16 +328,9 @@ pub fn is_private(path: &str) -> bool {
 
 /// Ask Modrinth about the files the pack left undeclared.
 ///
-/// An mrpack entry may say `env: {client: unknown, server: unknown}`, which the reader above
-/// has to treat as "both" - the alternative is dropping mods a pack really does want on both
-/// sides. On a server that guess is expensive: one client-only mod left in mods/ touches a
-/// client class during construction and takes the whole start down with it, which is exactly
-/// how Create+ fails without this.
-///
-/// Modrinth knows, because it is where the file came from: every entry carries the sha1 the
-/// CDN serves it under, and the project behind it states which sides it supports. Nothing here
-/// is fatal - a pack whose files are not on Modrinth, or no network at all, leaves the guess
-/// in place rather than refusing to build a server.
+/// An mrpack entry may say `env: {client: unknown, server: unknown}`, which the reader has to
+/// treat as both. On a server that guess is expensive: one client-only mod left in mods/ takes
+/// the start down. Nothing here is fatal - no network leaves the guess in place.
 pub async fn resolve_unknown_sides(client: &reqwest::Client, pack: &mut Pack) -> usize {
     let undeclared: Vec<String> = pack
         .files

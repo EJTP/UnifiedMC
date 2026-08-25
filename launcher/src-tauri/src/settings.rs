@@ -50,8 +50,7 @@ impl Settings {
             fs::create_dir_all(parent)?;
         }
         fs::write(&file, serde_json::to_vec_pretty(self)?)?;
-        // This file holds an api key, and the process umask is 0022 or 0002 on most boxes -
-        // which makes it readable by everyone with an account on the machine.
+        // The umask is 0022 on most boxes, which would leave this readable by every account.
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -63,14 +62,9 @@ impl Settings {
 
 /// The CurseForge key this build was compiled with, if it was given one.
 ///
-/// A key is a credential, so it is never written down here: `option_env!` reads it at build
-/// time from the environment, which in a release comes from a CI secret and in a local build
-/// from whatever the person building it exports. A build without one is not broken - the
-/// catalogue is then Modrinth only, which is what it has always been.
-///
-/// It is extractable from the binary by anyone who cares to look. That is true of every
-/// launcher that ships one, and it is why CurseForge issues per-application keys they can
-/// revoke rather than pretending a desktop application can keep a secret.
+/// A credential, so never written down here: `option_env!` reads it at build time. A build
+/// without one searches Modrinth only. It is extractable from the binary either way, which is
+/// why CurseForge issues per-application keys they can revoke.
 const BUILT_IN_CURSEFORGE_KEY: Option<&str> = option_env!("UNIFIEDMC_CF_KEY");
 
 pub fn curseforge_key() -> &'static str {
@@ -82,19 +76,14 @@ pub fn machine_memory_mb() -> u64 {
     total_memory_mb()
 }
 
-/// JVM flags, as a choice rather than a text box nobody knows how to fill.
-///
-/// The default collector pauses to collect, and a pause during a chunk load is a stutter. Both
-/// profiles here move that work off the pause; which one suits depends on whether the machine
-/// has cores to spare.
+/// JVM flags as a choice rather than a text box. The default collector pauses to collect, and
+/// a pause during a chunk load is a stutter; both profiles move that work off the pause.
 pub fn jvm_args(settings: &Settings, heap_mb: u64) -> Vec<String> {
     match settings.jvm_profile.as_str() {
-        // G1 tuned the way large modpacks are usually run: small regions, collect early,
-        // never let a pause grow long enough to see.
+        // G1 tuned the way large packs are run: small regions, collect early, short pauses.
         "balanced" => vec![
-            // Must come first, and must be here at all: G1NewSizePercent is an experimental
-            // option, and a JVM handed one without this refuses to start at all - no window,
-            // no crash report, just a launcher that looks like it did nothing.
+            // Must come first: G1NewSizePercent is experimental, and a JVM handed one without this
+            // refuses to start - no window, no crash report.
             "-XX:+UnlockExperimentalVMOptions".into(),
             "-XX:+UseG1GC".into(),
             "-XX:MaxGCPauseMillis=37".into(),
@@ -106,8 +95,7 @@ pub fn jvm_args(settings: &Settings, heap_mb: u64) -> Vec<String> {
             "-XX:+PerfDisableSharedMem".into(),
             "-XX:+AlwaysPreTouch".into(),
         ],
-        // ZGC collects concurrently, so pauses stay flat as the heap grows - at the cost of
-        // cores and memory. Worth it above 8 GB on a machine that has them.
+        // ZGC collects concurrently, at the cost of cores and memory. Worth it above 8 GB.
         "throughput" if heap_mb >= 6144 => vec![
             "-XX:+UseZGC".into(),
             "-XX:+ZGenerational".into(),
@@ -123,11 +111,8 @@ pub fn jvm_args(settings: &Settings, heap_mb: u64) -> Vec<String> {
     }
 }
 
-/// How much heap this pack needs.
-///
-/// The JVM default is a quarter of physical memory, which a two hundred mod pack runs out
-/// of. Scaling with the mod count tracks the actual driver. Capped at half the machine:
-/// handing the game more than the system has just moves the stalling into the swap file.
+/// How much heap this pack needs. The JVM default is a quarter of physical memory, which a two
+/// hundred mod pack runs out of. Capped at half the machine, or the stalling moves into swap.
 pub fn heap_mb(chosen: u64, mods: usize) -> u64 {
     let total = total_memory_mb();
     let room = total.saturating_sub(2048).max(2048);

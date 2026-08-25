@@ -1,8 +1,5 @@
-//! Where everything lives.
-//!
-//! Mods are stored by hash and shared across servers; instances are per server. The same
-//! layout the Python shell uses, so both can run against one data directory during the
-//! changeover.
+//! Where everything lives. Mods are stored by hash and shared across servers; instances are
+//! per server. The same layout the Python shell uses.
 
 use std::path::PathBuf;
 

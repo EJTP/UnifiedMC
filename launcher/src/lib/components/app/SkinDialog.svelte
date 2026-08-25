@@ -28,10 +28,7 @@
 		busy = false;
 	});
 
-	/**
-	 * The webview reads the file itself. A file dialog plugin would only get us a path Rust
-	 * would then have to read - the same bytes, one dependency further away.
-	 */
+	/** The webview reads the file itself; a file dialog plugin would only hand Rust a path. */
 	function choose(event: Event) {
 		const file = (event.currentTarget as HTMLInputElement).files?.[0];
 		failure = null;

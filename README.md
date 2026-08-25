@@ -183,6 +183,14 @@ Tests exist for the rules that would fail quietly: the hand-rolled ping protocol
 CurseForge hash reimplementation, heap sizing, and which side of a pack each mod belongs to.
 [CONTRIBUTING.md](CONTRIBUTING.md) says what each of them is guarding.
 
+## How this was made
+
+The backend is mine. Most of the rest was written with AI, across a lot of long sessions, and I
+would rather say so plainly than have somebody work it out from the commit history.
+
+It works, and it can be better. If you want to fix something, add a loader, catch a case I did
+not think of, or tell me where this is wrong: issues and pull requests are both welcome.
+
 ## Licence
 
 MIT. See [LICENSE](LICENSE).

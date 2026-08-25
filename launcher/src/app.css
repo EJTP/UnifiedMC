@@ -6,13 +6,7 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/*
- * Dark only. This is a launcher: it sits in front of a game, usually at night,
- * and a light theme would be the exception nobody asked for.
- *
- * Background is #0F0F23 rather than pure black - on OLED, pure black smears
- * during motion, and every panel above it would need a border to be visible.
- */
+/* Dark only. #0F0F23 rather than pure black: on OLED, pure black smears during motion. */
 :root {
   --background: #0f0f23;
   --foreground: #e2e8f0;
@@ -39,11 +33,8 @@
   --destructive: #ef4444;
   --destructive-foreground: #ffffff;
 
-  /*
-   * The design system proposes #4C1D95 for borders. That is a saturated violet:
-   * fine for one emphasised edge, exhausting on every card. Neutral by default,
-   * violet reserved for focus and selection.
-   */
+  /* Neutral by default. The design system's #4C1D95 is a saturated violet: fine on one edge,
+     exhausting on every card. Violet is kept for focus and selection. */
   --border: #262640;
   --input: #262640;
   --ring: #7c3aed;
@@ -102,10 +93,8 @@
   }
 
   html {
-    /*
-     * A launcher is read from further away than a web page, and Tailwind's spacing is in rem -
-     * so one number here scales type and layout together. 17px rather than the browser's 16.
-     */
+    /* A launcher is read from further away than a web page, and Tailwind's spacing is in rem -
+       one number scales type and layout together. */
     font-size: 19px;
   }
 
@@ -134,11 +123,7 @@
     user-select: text;
   }
 
-  /*
-   * A native select paints its list with the system theme, not the page's - so a dark app
-   * gets a white dropdown. The control itself takes our colours; colour-scheme is what makes
-   * the browser render the popup dark as well.
-   */
+  /* colour-scheme is what makes the browser paint a native select's popup dark as well. */
   select {
     color-scheme: dark;
     @apply cursor-pointer;
@@ -168,11 +153,7 @@
   }
 }
 
-/*
- * The indeterminate progress sweep. It lives here and not in the component: Svelte renames
- * @keyframes declared inside a component, and the Tailwind class that plays it is generated
- * out here - the renamed one would never be found and the bar would sit still.
- */
+/* The sweep lives here, not in the component: Svelte renames @keyframes declared in one. */
 @keyframes sweep {
   0% {
     transform: translateX(-100%);

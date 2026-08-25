@@ -1,12 +1,8 @@
 import type { Progress, SignInPrompt } from "./types";
 
 /**
- * The Rust side, or nothing.
- *
- * Running under `vite dev` in a plain browser there is no Tauri to call. Rather than let
- * every screen guard for that, the bridge answers with sample data of the same shape - so
- * layout work does not need a Rust build, and a missing backend can never look like an
- * empty server list.
+ * The Rust side, or nothing. Under `vite dev` there is no Tauri, so the bridge answers with
+ * sample data of the same shape - a missing backend can never look like an empty server list.
  */
 export const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 

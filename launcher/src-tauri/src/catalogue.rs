@@ -1,11 +1,7 @@
 //! Finding what a single player can add on top of what the server already sends.
 //!
-//! Two catalogues, because plenty of mods live on only one of them. Both are asked the same
-//! two questions: does this run without the server carrying it too, and does the server
-//! already ship it.
-//!
-//! Four kinds, because a resource pack and a shader are not mods but land in an instance the
-//! same way. Only the first question is a mod's alone - see `Kind`.
+//! Two catalogues, four kinds. Every hit is asked whether it runs without a server side, and
+//! whether the server already ships it.
 
 use std::collections::HashSet;
 
@@ -35,8 +31,7 @@ pub enum Kind {
     Datapack,
 }
 
-/// Every kind there is, for the callers that have to answer for all four - what a server may
-/// publish, what a player is allowed to add, which directories an instance gets.
+/// Every kind, for the callers that answer for all four.
 pub const KINDS: [Kind; 4] = [Kind::Mod, Kind::ResourcePack, Kind::Shader, Kind::Datapack];
 
 impl Kind {
@@ -80,17 +75,10 @@ impl Kind {
     }
 }
 
-/// The Modrinth search facets for one kind.
+/// The Modrinth search facets for one kind. The loader facet is a mod's alone.
 ///
-/// The loader facet is a mod's alone: a resource pack is not built against Fabric, and asking
-/// for `categories:neoforge` on a texture pack matches nothing at all.
-/// Sinytra Connector runs Fabric mods on NeoForge. A pack that carries it has twice the
-/// catalogue available to it, and hiding half of that because the loader string says
-/// "neoforge" is wrong in exactly the case somebody went to the trouble of installing it.
-///
-/// Matched on the filename because a manifest carries names, not mod ids. Connector's jar is
-/// always called some spelling of "connector", and the false positive - a mod that merely has
-/// the word in its name - costs nothing worse than a slightly wider search.
+/// `also_fabric` widens it: Sinytra Connector runs Fabric mods on NeoForge, and a pack carrying
+/// it has both catalogues available. Matched on the filename, because a manifest carries names.
 pub fn bridges_fabric(entries: &[ModEntry]) -> bool {
     entries
         .iter()
@@ -118,12 +106,9 @@ fn modrinth_facets(
     facets
 }
 
-/// Which Modrinth "loaders" a file of this kind has to carry.
-///
-/// Modrinth models every kind as a loader: a resource pack is `minecraft`, a datapack is
-/// `datapack`, a shader is `iris` or `optifine`. Without this the filter is a lie - Terralith
-/// asked for 1.21.1 answers with its NeoForge jar and its datapack zip in one list, and the
-/// jar is the first of the two.
+/// Which Modrinth "loaders" a file of this kind carries: a resource pack is `minecraft`, a
+/// datapack `datapack`, a shader `iris` or `optifine`. Without it, Terralith answers with its
+/// NeoForge jar and its datapack zip in one list.
 fn modrinth_loaders(kind: Kind, loader: &str) -> Option<String> {
     Some(match kind {
         Kind::Mod if loader.is_empty() => return None,
@@ -141,25 +126,19 @@ pub struct Hit {
     pub description: String,
     pub downloads: u64,
     pub source: String,
-    /// The server already sends this one. Shown, not hidden - hiding it does not answer the
-    /// question somebody has when they type "sodium".
+    /// The server already sends this one. Shown, not hidden.
     pub on_server: bool,
-    /// The player already put this in their own profile. Offering it again is a lie.
+    /// Already in the player's own profile.
     #[serde(default)]
     pub installed: bool,
     pub icon: Option<String>,
 }
 
-/// Can one player add this and have it work?
+/// Can one player add this and have it work? Only if the server does not have to carry it too.
 ///
-/// Only if the server does not have to carry it too. A backpack or a new block is
-/// `server_side: required`; in a personal profile it does nothing at best. Whether the server
-/// should have it is the server owner's decision, not a browser's.
-///
-/// A mod's question only. A resource pack or a shader has no server half that could be
-/// required, and Modrinth's datapack search returns the *mod* projects that ship a datapack
-/// file - Terralith is `server_side: required` and its datapack is still the player's to
-/// install. Asking here would throw away every honest answer.
+/// A mod's question alone: a resource pack has no server half, and Modrinth's datapack search
+/// returns the mod projects that ship one - Terralith is `server_side: required` and its
+/// datapack is still the player's to install.
 fn modrinth_verdict(project: &serde_json::Value) -> &'static str {
     let client = project.get("client_side").and_then(|v| v.as_str());
     let server = project.get("server_side").and_then(|v| v.as_str());
@@ -173,8 +152,7 @@ fn modrinth_verdict(project: &serde_json::Value) -> &'static str {
     }
 }
 
-/// CurseForge publishes it too, just not where you would look: a file's `gameVersions` array
-/// carries "Client" and "Server" beside the version and loader.
+/// CurseForge puts it in a file's `gameVersions` array, beside the version and loader.
 fn cf_tags(files: &[serde_json::Value], minecraft: &str, loader: &str) -> HashSet<String> {
     let mut tags = HashSet::new();
     for file in files {
@@ -303,11 +281,8 @@ impl Catalogue<'_> {
             .unwrap_or(serde_json::Value::Null))
     }
 
-    /// Which Modrinth projects the server already ships, resolved from the file hashes.
-    /// One batch lookup instead of guessing from names.
-    ///
-    /// Takes the entries rather than the manifest because only the kind being browsed counts:
-    /// the server shipping a shader says nothing about the resource pack tab.
+    /// Which Modrinth projects the server already ships, by file hash - one batch lookup.
+    /// Takes entries rather than the manifest: only the kind being browsed counts.
     async fn served_modrinth(&self, entries: &[ModEntry]) -> HashSet<String> {
         let hashes: Vec<&str> = entries.iter().map(|m| m.sha1.as_str()).collect();
         if hashes.is_empty() {
@@ -341,8 +316,7 @@ impl Catalogue<'_> {
         let mut prints = Vec::new();
         let mut missing = 0usize;
         for entry in entries {
-            // the sha1 names a blob or it names nothing: a fingerprint of a file we were
-            // pointed at rather than one we hashed ourselves is an oracle on its contents
+            // a fingerprint of a file we were pointed at is an oracle on its contents
             if !crate::sync::is_hash(&entry.sha1) {
                 missing += 1;
                 continue;
@@ -355,8 +329,7 @@ impl Catalogue<'_> {
         if prints.is_empty() {
             return HashSet::new();
         }
-        // A partial answer must not be remembered: the browser would keep offering mods the
-        // pack already contains. Nothing is cached here for exactly that reason.
+        // A partial answer must not be remembered, so nothing here is cached.
         let _ = missing;
 
         let Ok(data) = self
@@ -445,10 +418,8 @@ impl Catalogue<'_> {
         self.modrinth_side(slug).await
     }
 
-    /// `own_setup` says there is no server on the other side - an instance the player runs
-    /// themselves. The client-side filter exists so nobody installs a mod that needs a server
-    /// half onto a server that has not got it; where the player IS the server, it only hides
-    /// most of the catalogue for no reason.
+    /// `own_setup`: no server on the other side, so the client-side filter would only hide most of
+    /// the catalogue for no reason.
     pub async fn search(
         &self,
         manifest: &Manifest,
@@ -532,8 +503,7 @@ impl Catalogue<'_> {
         Ok(found)
     }
 
-    // One private helper that mirrors search()'s parameters. Wrapping them in a struct to
-    // satisfy the count would add a type that exists for the lint and for nothing else.
+    // A private helper mirroring search()'s parameters; a struct for the lint alone earns nothing.
     #[allow(clippy::too_many_arguments)]
     async fn search_curseforge(
         &self,
@@ -561,11 +531,9 @@ impl Catalogue<'_> {
             ("pageSize", limit.to_string()),
             ("index", offset.to_string()),
         ];
-        // Left as the one loader even when Connector is in the pack: CurseForge takes a single
-        // modLoaderType per search, and dropping it to widen the net would pull in Forge-only
-        // mods that no bridge makes work. Modrinth, which does take a list, is widened instead.
-        // Only a mod is built against a loader; sending modLoaderType with class 12 or 6552
-        // would filter every texture pack out of its own tab.
+        // One loader even with Connector in the pack: CurseForge takes a single modLoaderType, and
+        // dropping it would pull in Forge-only mods. Modrinth, which takes a list, is widened instead.
+        // Sent for mods only - class 12 or 6552 with a loader filters every pack out of its own tab.
         if kind == Kind::Mod {
             if let Some(loader) = cf_loader(&loader) {
                 params.push(("modLoaderType", loader.to_string()));
@@ -634,12 +602,10 @@ impl Catalogue<'_> {
         out
     }
 
-    /// Resolve each pick plus everything it requires. Installing Iris without Sodium is a
-    /// crash, not a preference.
+    /// Resolve each pick plus what it requires: Iris without Sodium is a crash.
     ///
-    /// Dependencies are followed for mods only: what a shader or a resource pack declares as
-    /// required is a *mod*, and a mod belongs in `mods/` after the client-side question was
-    /// asked of it - not silently in `shaderpacks/` because that is the tab that was open.
+    /// Followed for mods only - what a shader declares as required is a mod, and belongs in `mods/`
+    /// after the client-side question, not in `shaderpacks/` because that tab was open.
     pub async fn resolve(
         &self,
         manifest: &Manifest,
@@ -686,9 +652,8 @@ impl Catalogue<'_> {
             .as_ref()
             .map(|l| l.kind.to_lowercase())
             .unwrap_or_default();
-        // game_versions plus loaders is the whole match: for a resource pack Modrinth already
-        // turned the file's pack_format into the Minecraft versions it fits, and a datapack's
-        // own version range is the same field. Nothing is guessed from the filename.
+        // game_versions plus loaders is the whole match: Modrinth already turned a pack's pack_format
+        // into the versions it fits. Nothing is guessed from the filename.
         let mut query = vec![("game_versions", format!("[\"{}\"]", manifest.minecraft))];
         if let Some(loaders) = modrinth_loaders(kind, &loader) {
             query.push(("loaders", loaders));
@@ -698,15 +663,13 @@ impl Catalogue<'_> {
             .await
             .ok()?;
 
-        // release before beta: the list is newest-first regardless of type, and handing
-        // somebody a beta as another mod's dependency is a choice they never made
+        // release before beta: handing somebody a beta as a dependency is a choice they never made
         let version = versions
             .iter()
             .find(|v| v.get("version_type").and_then(|t| t.as_str()) == Some("release"))
             .or_else(|| versions.first())?;
 
-        // Not `?`: a resource pack version can come back without the field at all, and losing
-        // the file because it declares no dependencies would be an odd way to fail.
+        // Not `?`: a version can come back without the field, and losing the file over that is odd.
         if let Some(dependencies) = version.get("dependencies").and_then(|d| d.as_array()) {
             for dependency in dependencies {
                 if dependency.get("dependency_type").and_then(|t| t.as_str()) == Some("required") {
@@ -717,8 +680,7 @@ impl Catalogue<'_> {
             }
         }
 
-        // A version can carry more than one file - a shader's lite variant, a mod's sources
-        // jar - and `primary` is Modrinth's answer to which one is the thing to install.
+        // A version can carry several files; `primary` is which one to install.
         let files = version.get("files")?.as_array()?;
         let file = files
             .iter()
@@ -753,8 +715,7 @@ impl Catalogue<'_> {
             .cf_get(&format!("/mods/{project}/files"), &query)
             .await
             .ok()?;
-        // gameVersion is all CurseForge offers for a pack: there is no pack_format and no
-        // shader-loader field on a file, so beyond "it lists this Minecraft version" the newest
+        // gameVersion is all CurseForge offers for a pack - no pack_format, no shader-loader field.
         // release is taken rather than checked. Sorting is stable, so within one release type
         // the API's own newest-first order survives.
         let mut files = data.as_array()?.clone();

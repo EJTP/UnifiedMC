@@ -1,10 +1,6 @@
 /**
- * German, the language the product is written in.
- *
- * This dict is also the fallback: a key missing from another language falls back here rather
- * than showing the player a raw dotted key.
- *
- * Sections are fixed so several people can edit different namespaces without colliding.
+ * German, and the fallback: a key missing from another language falls back here rather than
+ * showing a raw dotted key. Sections are fixed so namespaces can be edited without colliding.
  */
 export default {
 	/* ---------------------------------------------------------------- common. */

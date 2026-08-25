@@ -18,8 +18,7 @@ use crate::servers::Manifest;
 use crate::session::Session;
 use crate::{paths, settings::Settings, sync};
 
-/// What the window shows while the player waits. The work happens elsewhere; without this
-/// they would watch a spinner through a four hundred megabyte download.
+/// What the window shows while the player waits, so a 400 MB download is not a bare spinner.
 #[derive(Clone, Serialize)]
 pub struct Progress {
     pub phase: String,
@@ -77,10 +76,8 @@ fn auth_for(session: &Session) -> AuthMethod {
     }
 }
 
-/// The arguments that send the game straight into a server.
-///
-/// Only an address belongs here. An instance key is a directory name, and handing that to
-/// --quickPlayMultiplayer asks the client to connect to a folder.
+/// The arguments that send the game straight into a server. Only an address belongs here: an
+/// instance key is a directory name, and --quickPlayMultiplayer would connect to a folder.
 fn quick_play(join: Option<&str>) -> Vec<String> {
     match join {
         Some(address) => vec!["--quickPlayMultiplayer".into(), address.into()],
@@ -90,10 +87,8 @@ fn quick_play(join: Option<&str>) -> Vec<String> {
 
 /// Bring an instance in line with the manifest and start it.
 ///
-/// `key` names the instance directory and the profile the player's own mods live in; `join` is
-/// the server to connect to on start, or none to land in Minecraft's own menu. They are not the
-/// same string: joining a server with a personal instance uses that instance's key and the
-/// server's address at once.
+/// `key` names the instance directory and the player's profile; `join` is the server to connect
+/// to, or none for Minecraft's own menu. Joining with a personal instance uses both at once.
 pub async fn run(
     app: AppHandle,
     client: reqwest::Client,
@@ -138,12 +133,9 @@ pub async fn run(
         synced.total as u64,
     );
 
-    // The rest of what the pack ships: the same job in a different directory.
-    //
-    // Only when the server actually publishes some. mods/ is the launcher's to fill, so an
-    // empty list there really does mean "no mods" - but resourcepacks/ and shaderpacks/ are
-    // where Minecraft itself puts whatever somebody dragged in, and reconciling an empty list
-    // against those would quietly delete every pack the player added by hand.
+    // The rest of what the pack ships, only when the server publishes some: resourcepacks/ and
+    // shaderpacks/ are also where the player drags their own, and reconciling an empty list
+    // against those would delete them.
     for (dir, phase) in [
         ("resourcepacks", "progress.resourcepacks"),
         ("shaderpacks", "progress.shaders"),
@@ -209,8 +201,7 @@ pub async fn run(
                         .file_name()
                         .map(|n| n.to_string_lossy().into_owned())
                         .unwrap_or(path);
-                    // the kind comes out of lyceris in English; it belongs in the detail, which
-                    // the window shows as it is
+                    // the kind comes out of lyceris in English; it belongs in the detail
                     report(
                         &app,
                         "progress.download",
@@ -236,12 +227,9 @@ pub async fn run(
     })
     .custom_args(quick_play(join.as_deref()));
 
-    // ponytail: lyceris' own downloads are a ceiling we cannot close from here. install() uses
-    // each sha1 only to decide WHETHER to fetch, never to check what arrived, so anything
-    // downloaded in a run is on the classpath that same run unverified - and loader libraries
-    // whose metadata carries no hash are never verified on any run. Everything is https, so the
-    // attacker has to be the upstream host. Fixing it means a patched lyceris; the version is
-    // pinned in Cargo.toml so the behaviour cannot change without someone choosing it.
+    // ponytail: lyceris uses each sha1 only to decide whether to fetch, never to check what
+    // arrived, so a file downloaded in a run is on the classpath unverified. Everything is https,
+    // so the attacker has to be the upstream host. Fixing it means a patched lyceris.
     let mut child = match loader_for(&manifest)? {
         Some(loader) => {
             let config = builder.loader(loader).build();
@@ -257,14 +245,12 @@ pub async fn run(
         }
     };
 
-    // The window is up. Said out loud, because this command does not return until the game
-    // ends: without it the launcher shows a progress dialog over the whole session, and the
-    // player is left looking at "starting" while they are already playing.
+    // The window is up. This command does not return until the game ends, so without it the
+    // progress dialog stands over the whole session.
     let _ = app.emit("unifiedmc://running", ());
     child.wait().await?;
 
-    // Whatever the player changed in game goes back to the shared file, so the next instance
-    // starts where this one left off.
+    // What the player changed in game goes back to the shared file.
     if let Err(error) = crate::options::collect(&instance) {
         eprintln!("could not save shared settings: {error}");
     }

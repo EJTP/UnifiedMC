@@ -1,8 +1,5 @@
-//! Turning a server description into something that can be drawn with its colours.
-//!
-//! A server sends this one of two ways: as a chat component tree with `color` and `bold` on
-//! each part, or as plain text with section codes (`§c` for red) left over from older
-//! versions. Both are still in use, so both are read here and come out the same shape.
+//! Turning a server description into something drawable with its colours. A server sends it as
+//! a chat component tree or as a legacy string with section signs.
 
 use serde::{Deserialize, Serialize};
 
