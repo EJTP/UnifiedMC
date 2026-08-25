@@ -21,22 +21,27 @@
 	];
 
 	/** What this tab is showing. */
+	/** An instance has no server on the other side, so nothing here is about one. */
+	const own = $derived(Boolean(launcher.browsing?.address.startsWith("instance-")));
+
 	const hint = $derived.by(() => {
-		const key =
-			launcher.tab === "search" && launcher.kind !== "mod"
-				? "mods.hint.searchClient"
-				: `mods.hint.${launcher.tab}`;
-		return t(key);
+		if (launcher.tab !== "search") return t(`mods.hint.${launcher.tab}${own ? "Own" : ""}`);
+		if (own) return t("mods.hint.searchOwn");
+		return t(launcher.kind === "mod" ? "mods.hint.search" : "mods.hint.searchClient");
 	});
 
 	/** Said out loud: a chooser quietly one item short reads as a bug, not as the server's decision. */
-	const restricted = $derived(
-		launcher.allowedKinds.length < KINDS.length
-			? t("mods.restricted", {
-					kinds: launcher.allowedKinds.map((kind) => t(`mods.kind.${kind}`)).join(", ")
-				})
-			: ""
-	);
+	/**
+	 * Why a category is missing. Two reasons, and they are not the same sentence: a pack decides
+	 * what may be added to it, and a setup with no loader cannot run a mod at all.
+	 */
+	const restricted = $derived.by(() => {
+		if (launcher.allowedKinds.length >= KINDS.length) return "";
+		if (!launcher.allowedKinds.includes("mod")) return t("mods.noLoader");
+		return t("mods.restricted", {
+			kinds: launcher.allowedKinds.map((kind) => t(`mods.kind.${kind}`)).join(", ")
+		});
+	});
 
 	/** An instance is browsed through a synthetic "instance-<id>" address nobody should read. */
 	const address = $derived(

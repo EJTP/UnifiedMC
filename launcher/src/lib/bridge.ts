@@ -106,10 +106,13 @@ function sample(command: string, args: Record<string, unknown>): unknown {
 		}
 		// The one server with a pack of its own owns the world data, so datapacks are not on
 		// offer there - the same shape the Rust side answers with.
-		case "allowed_kinds":
-			return String(args.address).startsWith("194.54.88.19")
-				? ["mod", "resourcepack", "shader"]
-				: ["mod", "resourcepack", "shader", "datapack"];
+		case "allowed_kinds": {
+			const at = String(args.address);
+			// the pack server decides; an instance with no loader cannot run a mod at all
+			if (at.startsWith("194.54.88.19")) return ["mod", "resourcepack", "shader"];
+			if (at === "instance-c3") return ["resourcepack", "shader", "datapack"];
+			return ["mod", "resourcepack", "shader", "datapack"];
+		}
 		case "mods": {
 			const tab = String(args.tab);
 			const kind = String(args.kind ?? "mod");
@@ -272,6 +275,9 @@ function sampleInstances() {
 		{ id: "a1", name: "Create Astral", minecraft: "1.18.2", loader: "forge",
 		  loader_version: "1.18.2-40.2.0", source: "mrpack" },
 		{ id: "b2", name: "Sodium Test", minecraft: "1.21.1", loader: "neoforge",
+		  loader_version: null, source: null },
+		// No loader: nothing here can run a mod, which is a state the browser has to show
+		{ id: "c3", name: "Vanilla 1.21.8", minecraft: "1.21.8", loader: null,
 		  loader_version: null, source: null }
 	];
 }

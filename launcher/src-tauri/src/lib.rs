@@ -36,6 +36,10 @@ fn allowed(manifest: &Manifest) -> Vec<Kind> {
     catalogue::KINDS
         .into_iter()
         .filter(|kind| manifest.mods.is_empty() || *kind != Kind::Datapack)
+        // Without a loader nothing here loads a mod, so offering the whole catalogue offers
+        // jars that cannot run. Resource packs, shaders and datapacks are the game's own and
+        // need no loader at all.
+        .filter(|kind| manifest.loader.is_some() || *kind != Kind::Mod)
         .collect()
 }
 
