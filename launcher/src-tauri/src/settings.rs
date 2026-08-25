@@ -92,6 +92,10 @@ pub fn jvm_args(settings: &Settings, heap_mb: u64) -> Vec<String> {
         // G1 tuned the way large modpacks are usually run: small regions, collect early,
         // never let a pause grow long enough to see.
         "balanced" => vec![
+            // Must come first, and must be here at all: G1NewSizePercent is an experimental
+            // option, and a JVM handed one without this refuses to start at all - no window,
+            // no crash report, just a launcher that looks like it did nothing.
+            "-XX:+UnlockExperimentalVMOptions".into(),
             "-XX:+UseG1GC".into(),
             "-XX:MaxGCPauseMillis=37".into(),
             "-XX:G1HeapRegionSize=16M".into(),
@@ -156,6 +160,35 @@ fn total_memory_mb() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every option the JVM calls experimental. Adding one to a profile without the unlock
+    /// flag in front of it is the difference between a game that starts and one that does not.
+    const EXPERIMENTAL: &[&str] = &["G1NewSizePercent", "G1MaxNewSizePercent"];
+
+    #[test]
+    fn an_experimental_flag_is_always_unlocked_first() {
+        for profile in ["balanced", "throughput", "default"] {
+            let settings = Settings {
+                jvm_profile: profile.into(),
+                ..Default::default()
+            };
+            for heap in [2048, 8192] {
+                let flags = jvm_args(&settings, heap);
+                let experimental = flags
+                    .iter()
+                    .position(|f| EXPERIMENTAL.iter().any(|e| f.contains(e)));
+                let Some(at) = experimental else { continue };
+                let unlock = flags
+                    .iter()
+                    .position(|f| f == "-XX:+UnlockExperimentalVMOptions");
+                assert!(
+                    unlock.is_some_and(|u| u < at),
+                    "{profile} at {heap} MB passes an experimental option without unlocking it \
+                     first, and the JVM refuses to start: {flags:?}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn a_profile_is_flags_and_custom_is_whatever_was_typed() {
