@@ -474,7 +474,9 @@ async fn provision(
     //    against NeoForge, and Fabric answers a jar it does not understand with "found 1
     //    non-fabric mod" and carries on: a server that runs perfectly and provisions nobody.
     //    Saying so here beats letting somebody find out from a launcher that sees no pack.
-    let publisher = matches!(loader.as_str(), "neoforge" | "forge");
+    // Quilt loads the Fabric side of the jar, so it counts. Forge is the one still missing:
+    // its @Mod is in another package, and older versions run with a third set of names.
+    let publisher = matches!(loader.as_str(), "neoforge" | "fabric" | "quilt");
     if publisher {
         let mods = root.join("mods");
         std::fs::create_dir_all(&mods)?;
@@ -490,7 +492,7 @@ async fn provision(
             ),
         }
     } else {
-        println!("  no publisher mod: it is a NeoForge mod and this pack is {loader}");
+        println!("  no publisher mod: there is no {loader} build of it yet");
         println!("    the server will run; clients just cannot install from it yet");
         println!("    https://github.com/EJTP/UnifiedMC-Server#platforms");
     }
@@ -578,7 +580,7 @@ async fn provision(
 /// Where the publisher mod is published. The launcher and the server mod version separately,
 /// so this follows whatever the server repository last released rather than our own number.
 const PUBLISHER_URL: &str =
-    "https://github.com/EJTP/UnifiedMC-Server/releases/latest/download/unifiedmc-server-0.1.0.jar";
+    "https://github.com/EJTP/UnifiedMC-Server/releases/latest/download/unifiedmc-server.jar";
 
 /// Returns the java command line that starts the server, without the heap flags.
 async fn install_loader(
