@@ -29,3 +29,12 @@ The interesting ones:
 
 Comments explain *why*, not *what*. If a line looks odd, the comment says what goes wrong
 without it — several here exist because something actually went wrong.
+
+## Building a release
+
+    UNIFIEDMC_CF_KEY=<key> pnpm tauri build
+
+The key is CurseForge's, and it is read from the environment at compile time - never from a
+file in here, because this repository is public. Without it a build searches Modrinth only,
+which is a smaller catalogue, not a broken one. For the release workflow it belongs in the
+repository's secrets, not in a commit.
