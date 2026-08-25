@@ -1,4 +1,4 @@
-import { call, onProgress, onSignIn } from "./bridge";
+import { call, onProgress, onRunning, onSignIn } from "./bridge";
 import { locale, resolveLocale, t, translate } from "./i18n.svelte";
 import type {
 	Hit,
@@ -49,7 +49,25 @@ class LauncherState {
 	unknownServerIcon = $state<string | null>(null);
 	/** The player's face, from their skin. Fetched separately so the window draws first. */
 	playerHead = $state<string | null>(null);
+	/**
+	 * The one launch being prepared, if any. Preparing is serial - two at once would fight
+	 * over the same blob store and the same instance directory.
+	 */
 	playing = $state<string | null>(null);
+
+	/**
+	 * What is actually running, by the id the list shows, and which kind it is.
+	 *
+	 * Minecraft itself allows several windows; a Mojang account allows one SERVER session, and
+	 * the second one is thrown off with "logged in from another location". So servers block
+	 * each other and nothing blocks singleplayer, which is the rule the game already enforces
+	 * rather than one of ours.
+	 */
+	running = $state<Record<string, "server" | "instance">>({});
+
+	get onAServer() {
+		return Object.values(this.running).includes("server");
+	}
 	error = $state<string | null>(null);
 	/** Whether the stored lists have arrived. Before that, empty means "not read yet". */
 	booted = $state(false);
@@ -203,18 +221,12 @@ class LauncherState {
 	}
 
 	async playInstance(instance: Instance) {
-		if (this.playing) return;
-		this.playing = instance.id;
-		this.error = null;
-		this.progress = { phase: t("progress.prepare"), detail: instance.name, done: 0, total: 0 };
-		try {
-			await call("play_instance", { id: instance.id });
-		} catch (error) {
-			this.error = translate(String(error));
-		} finally {
-			this.playing = null;
-			this.progress = null;
-		}
+		// Not blocked by a server session: singleplayer needs no account on any server, and
+		// the game is happy to run twice.
+		if (this.playing || this.running[instance.id]) return;
+		await this.launch(instance.id, "instance", instance.name, () =>
+			call("play_instance", { id: instance.id })
+		);
 	}
 
 	/** The server whose profile question is open, if one is. */
@@ -229,7 +241,7 @@ class LauncherState {
 	 * when no instance fits yet: creating one is reachable from that dialog and nowhere else.
 	 */
 	askThenPlay(server: SavedServer) {
-		if (this.playing) return;
+		if (this.playing || this.running[server.id]) return;
 		const manifest = this.status[server.id]?.manifest;
 		if (manifest && manifest.mods.length > 0) {
 			void this.play(server);
@@ -239,17 +251,40 @@ class LauncherState {
 	}
 
 	async play(server: SavedServer, instance: string | null = null) {
-		if (this.playing) return;
+		if (this.playing || this.running[server.id]) return;
+		if (this.onAServer) {
+			this.error = t("error.alreadyOnAServer");
+			return;
+		}
 		this.choosing = null;
-		this.playing = server.id;
+		await this.launch(server.id, "server", server.name, () =>
+			call("play", { address: server.address, instance })
+		);
+	}
+
+	/**
+	 * Everything a launch has in common: prepare with the overlay up, drop the overlay the
+	 * moment the game's window appears, and keep the row marked until the game exits - the
+	 * command behind this does not return until then.
+	 */
+	async launch(id: string, kind: "server" | "instance", label: string, start: () => Promise<unknown>) {
+		this.playing = id;
 		this.error = null;
-		this.progress = { phase: t("progress.prepare"), detail: server.name, done: 0, total: 0 };
+		this.progress = { phase: t("progress.prepare"), detail: label, done: 0, total: 0 };
+
+		const stop = await onRunning(() => {
+			this.progress = null;
+			this.playing = null;
+			this.running[id] = kind;
+		});
 		try {
-			await call("play", { address: server.address, instance });
+			await start();
 		} catch (error) {
 			this.error = translate(String(error));
 		} finally {
-			this.playing = null;
+			stop();
+			delete this.running[id];
+			if (this.playing === id) this.playing = null;
 			this.progress = null;
 		}
 	}

@@ -242,22 +242,26 @@ pub async fn run(
     // whose metadata carries no hash are never verified on any run. Everything is https, so the
     // attacker has to be the upstream host. Fixing it means a patched lyceris; the version is
     // pinned in Cargo.toml so the behaviour cannot change without someone choosing it.
-    match loader_for(&manifest)? {
+    let mut child = match loader_for(&manifest)? {
         Some(loader) => {
             let config = builder.loader(loader).build();
             install(&config, Some(&emitter)).await?;
             report(&app, "progress.launch", &manifest.minecraft, 0, 0);
-            let mut child = launch(&config, Some(&emitter)).await?;
-            child.wait().await?;
+            launch(&config, Some(&emitter)).await?
         }
         None => {
             let config = builder.build();
             install(&config, Some(&emitter)).await?;
             report(&app, "progress.launch", &manifest.minecraft, 0, 0);
-            let mut child = launch(&config, Some(&emitter)).await?;
-            child.wait().await?;
+            launch(&config, Some(&emitter)).await?
         }
-    }
+    };
+
+    // The window is up. Said out loud, because this command does not return until the game
+    // ends: without it the launcher shows a progress dialog over the whole session, and the
+    // player is left looking at "starting" while they are already playing.
+    let _ = app.emit("unifiedmc://running", ());
+    child.wait().await?;
 
     // Whatever the player changed in game goes back to the shared file, so the next instance
     // starts where this one left off.

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Boxes, Loader2, Package, Play, Trash2 } from "@lucide/svelte";
+	import { Boxes, Gamepad2, Loader2, Package, Play, Trash2 } from "@lucide/svelte";
 	import { Button } from "$lib/components/ui/button";
 	import { launcher } from "$lib/state.svelte";
 	import { t } from "$lib/i18n.svelte";
@@ -27,6 +27,9 @@
 
 	/** No other row may start while one is starting; the overlay covers the list either way. */
 	const blocked = $derived(Boolean(launcher.playing) && !busy);
+
+	/** Already running: the row says so rather than offering a start that is refused. */
+	const live = $derived(Boolean(launcher.running[instance.id]));
 </script>
 
 <!-- Same box, icon and button geometry as ServerCard: the two lists read as one system. -->
@@ -82,11 +85,15 @@
 			size="lg"
 			class="min-w-28 bg-cta text-cta-foreground hover:bg-cta/90"
 			onclick={onplay}
-			disabled={busy || blocked}
+			disabled={busy || blocked || live}
 		>
 			{#if busy}
 				<Loader2 class="size-4 animate-spin" />
 				{t("common.starting")}
+			{:else if live}
+				<!-- Running: a second start would only be refused, and the row should say why -->
+				<Gamepad2 class="size-4" />
+				{t("common.playing")}
 			{:else}
 				<Play class="size-4 fill-current" />
 				{t("common.play")}

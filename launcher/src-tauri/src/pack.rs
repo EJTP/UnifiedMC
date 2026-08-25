@@ -330,6 +330,91 @@ pub fn is_private(path: &str) -> bool {
         || PRIVATE.iter().any(|dir| lower.starts_with(dir))
 }
 
+/// Ask Modrinth about the files the pack left undeclared.
+///
+/// An mrpack entry may say `env: {client: unknown, server: unknown}`, which the reader above
+/// has to treat as "both" - the alternative is dropping mods a pack really does want on both
+/// sides. On a server that guess is expensive: one client-only mod left in mods/ touches a
+/// client class during construction and takes the whole start down with it, which is exactly
+/// how Create+ fails without this.
+///
+/// Modrinth knows, because it is where the file came from: every entry carries the sha1 the
+/// CDN serves it under, and the project behind it states which sides it supports. Nothing here
+/// is fatal - a pack whose files are not on Modrinth, or no network at all, leaves the guess
+/// in place rather than refusing to build a server.
+pub async fn resolve_unknown_sides(client: &reqwest::Client, pack: &mut Pack) -> usize {
+    let undeclared: Vec<String> = pack
+        .files
+        .iter()
+        .filter(|file| file.side == Side::Both && file.path.starts_with("mods/"))
+        .filter_map(|file| file.sha1.clone())
+        .collect();
+    if undeclared.is_empty() {
+        return 0;
+    }
+
+    let answer = client
+        .post("https://api.modrinth.com/v2/version_files")
+        .json(&serde_json::json!({ "hashes": undeclared, "algorithm": "sha1" }))
+        .send()
+        .await;
+    let Ok(response) = answer else { return 0 };
+    let Ok(versions) = response.json::<serde_json::Value>().await else {
+        return 0;
+    };
+    let Some(by_hash) = versions.as_object() else {
+        return 0;
+    };
+
+    // hash -> project id, then one bulk call for the projects themselves: the version tells us
+    // which project a file belongs to, and only the project states the sides.
+    let projects: Vec<String> = by_hash
+        .values()
+        .filter_map(|v| v.get("project_id")?.as_str().map(str::to_string))
+        .collect();
+    if projects.is_empty() {
+        return 0;
+    }
+    let Ok(listed) = client
+        .get("https://api.modrinth.com/v2/projects")
+        .query(&[("ids", serde_json::to_string(&projects).unwrap_or_default())])
+        .send()
+        .await
+    else {
+        return 0;
+    };
+    let Ok(details) = listed.json::<serde_json::Value>().await else {
+        return 0;
+    };
+
+    let mut client_only = std::collections::HashSet::new();
+    if let Some(array) = details.as_array() {
+        for project in array {
+            if project.get("server_side").and_then(|v| v.as_str()) == Some("unsupported") {
+                if let Some(id) = project.get("id").and_then(|v| v.as_str()) {
+                    client_only.insert(id.to_string());
+                }
+            }
+        }
+    }
+
+    let mut moved = 0usize;
+    for file in &mut pack.files {
+        let Some(sha1) = &file.sha1 else { continue };
+        let Some(version) = by_hash.get(sha1) else {
+            continue;
+        };
+        let Some(id) = version.get("project_id").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        if file.side == Side::Both && client_only.contains(id) {
+            file.side = Side::ClientOnly;
+            moved += 1;
+        }
+    }
+    moved
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Play, Package, Loader2, Trash2, Server, Cog } from "@lucide/svelte";
+	import { Play, Package, Loader2, Trash2, Server, Cog, Gamepad2 } from "@lucide/svelte";
 	import { launcher } from "$lib/state.svelte";
 	import { t } from "$lib/i18n.svelte";
 	import Motd from "./Motd.svelte";
@@ -58,6 +58,9 @@
 
 	/** No other row may start while one is starting; the overlay covers the list either way. */
 	const blocked = $derived(Boolean(launcher.playing) && !busy);
+
+	/** Already running: the row says so rather than offering a start that is refused. */
+	const live = $derived(Boolean(launcher.running[server.id]));
 
 	/**
 	 * A pack states its own version and loader, so there is nothing here to override: the
@@ -194,6 +197,10 @@
 			{#if busy}
 				<Loader2 class="size-4 animate-spin" />
 				{t("common.starting")}
+			{:else if live}
+				<!-- Running: a second start would only be refused, and the row should say why -->
+				<Gamepad2 class="size-4" />
+				{t("common.playing")}
 			{:else}
 				<Play class="size-4 fill-current" />
 				{t("common.play")}

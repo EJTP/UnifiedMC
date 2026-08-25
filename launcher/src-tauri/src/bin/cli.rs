@@ -35,6 +35,9 @@ enum Command {
         /// Say what would happen, write nothing.
         #[arg(long)]
         dry_run: bool,
+        /// Say you have read https://aka.ms/MinecraftEULA. Without it the server will not start.
+        #[arg(long)]
+        eula: bool,
         /// CurseForge API key, needed to resolve a CurseForge manifest.
         #[arg(long, env = "UNIFIEDMC_CF_KEY", hide_env_values = true)]
         cf_key: Option<String>,
@@ -92,8 +95,9 @@ async fn main() -> Result<()> {
             pack,
             out,
             dry_run,
+            eula,
             cf_key,
-        } => init(&pack, out, dry_run, cf_key).await,
+        } => init(&pack, out, dry_run, eula, cf_key).await,
         Command::Token => {
             println!("{}", new_token());
             eprintln!("\nPut this in config/unifiedmc.properties as:");
@@ -146,6 +150,7 @@ async fn init(
     path: &Path,
     out: Option<PathBuf>,
     dry_run: bool,
+    accept_eula: bool,
     cf_key: Option<String>,
 ) -> Result<()> {
     let pack = pack::read(path)?;
@@ -189,6 +194,15 @@ async fn init(
     let client = reqwest::Client::builder()
         .user_agent(concat!("UnifiedMC/", env!("CARGO_PKG_VERSION")))
         .build()?;
+
+    // Before anything is written: a pack that leaves a mod's sides undeclared would otherwise
+    // put a client-only jar in mods/, and a dedicated server dies on the first client class it
+    // touches. Modrinth is asked once, in bulk, and a failure here changes nothing.
+    let mut pack = pack;
+    let moved = pack::resolve_unknown_sides(&client, &mut pack).await;
+    if moved > 0 {
+        println!("  {moved} more turned out to be client-only; Modrinth says so, the pack did not");
+    }
 
     let mut written = 0usize;
     let mut failed: Vec<(String, String)> = Vec::new();
@@ -267,7 +281,7 @@ async fn init(
         println!("\nGet those by hand before starting the server; it will be missing them.");
     }
 
-    println!("Upload its contents to your server, then restart it.");
+    provision(&client, &root, &pack, accept_eula).await?;
     Ok(())
 }
 
@@ -436,6 +450,229 @@ async fn report(response: reqwest::Response) -> Result<()> {
         ));
     }
     Err(anyhow!("{status}: {body}"))
+}
+
+/// The pieces a directory of mods is not: a loader, a server jar, the two files Minecraft
+/// refuses to start without, and something to double-click.
+///
+/// Without this, `init` produced a folder that looked complete and could not be started, and
+/// every person who tried had to go and find the same four things by hand.
+async fn provision(
+    client: &reqwest::Client,
+    root: &Path,
+    pack: &pack::Pack,
+    accept_eula: bool,
+) -> Result<()> {
+    println!("\nSetting the server up:");
+
+    let (loader, mut version) = pack
+        .loader
+        .clone()
+        .unwrap_or_else(|| ("neoforge".into(), String::new()));
+
+    // 1. The mod that makes this a UnifiedMC server at all - where it can load. It is written
+    //    against NeoForge, and Fabric answers a jar it does not understand with "found 1
+    //    non-fabric mod" and carries on: a server that runs perfectly and provisions nobody.
+    //    Saying so here beats letting somebody find out from a launcher that sees no pack.
+    let publisher = matches!(loader.as_str(), "neoforge" | "forge");
+    if publisher {
+        let mods = root.join("mods");
+        std::fs::create_dir_all(&mods)?;
+        match fetch(client, PUBLISHER_URL).await {
+            Ok(bytes) => {
+                std::fs::write(mods.join("unifiedmc-server.jar"), &bytes)?;
+                println!("  the publisher mod, into mods/");
+            }
+            // Not fatal: everything else here still produces a working server, only one that
+            // hands nothing to clients.
+            Err(error) => println!(
+                "  could not fetch the publisher mod: {error}\n    get it from {PUBLISHER_URL}"
+            ),
+        }
+    } else {
+        println!("  no publisher mod: it is a NeoForge mod and this pack is {loader}");
+        println!("    the server will run; clients just cannot install from it yet");
+        println!("    https://github.com/EJTP/UnifiedMC-Server#platforms");
+    }
+
+    // 2. The loader's own server. Fabric hands out a launchable jar; NeoForge and Forge hand
+    //    out an installer that has to be run once, which needs a JVM on this machine.
+    if version.is_empty() {
+        if let Some(kind) = launcher_lib::loaders::Kind::parse(&loader) {
+            version = launcher_lib::loaders::latest(client, kind, &pack.minecraft)
+                .await
+                .unwrap_or_default();
+        }
+    }
+    // Sized like the launcher sizes a client: a pack this size does not fit in the JVM's
+    // default quarter of the machine, and a server that dies at 40 players is not a mystery.
+    let heap = 2048 + 12 * pack.files.len().min(500);
+    let start = install_loader(client, root, &loader, &version, &pack.minecraft, heap).await?;
+
+    // 3. Minecraft will not start without being told the licence was read, and that is the
+    //    admin's statement to make, not ours.
+    std::fs::write(
+        root.join("eula.txt"),
+        if accept_eula {
+            "# Accepted by whoever ran unifiedmc-server-cli init --eula\neula=true\n"
+        } else {
+            "eula=false\n"
+        },
+    )?;
+
+    // 4. A server.properties that matches the pack rather than the vanilla defaults.
+    let properties = root.join("server.properties");
+    if !properties.exists() {
+        std::fs::write(
+            &properties,
+            format!(
+                "motd={} {}\nserver-port=25565\nonline-mode=true\nmax-players=20\n\
+                 view-distance=10\nsimulation-distance=8\nlevel-name=world\nmotd-escaped=false\n",
+                pack.name, pack.version
+            ),
+        )?;
+        println!("  server.properties");
+    }
+
+    // 5. Something to run. The heap is already inside `start` - a JVM option after -jar is an
+    //    argument to the program, not to the JVM, so appending it here would set nothing.
+    std::fs::write(
+        root.join("start.sh"),
+        format!("#!/bin/sh\ncd \"$(dirname \"$0\")\"\nexec {start}\n"),
+    )?;
+    std::fs::write(
+        root.join("start.bat"),
+        format!("@echo off\r\ncd /d \"%~dp0\"\r\n{start}\r\npause\r\n"),
+    )?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            root.join("start.sh"),
+            std::fs::Permissions::from_mode(0o755),
+        )?;
+    }
+    println!("  start.sh and start.bat, {heap} MB heap");
+
+    // Said here rather than discovered at the first start: a server directory is usually built
+    // on one machine and run on another, so this is a note, not a failure.
+    if std::process::Command::new("java")
+        .arg("-version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_err()
+    {
+        println!("  no java on this machine - the server needs a JDK 21 wherever it runs");
+    }
+
+    println!("\n{} is ready.", root.display());
+    if !accept_eula {
+        println!("  Read https://aka.ms/MinecraftEULA, then set eula=true in eula.txt");
+        println!("  (or run this again with --eula, which says you have read it)");
+    }
+    println!("  Start it with ./start.sh");
+    Ok(())
+}
+
+/// Where the publisher mod is published. The launcher and the server mod version separately,
+/// so this follows whatever the server repository last released rather than our own number.
+const PUBLISHER_URL: &str =
+    "https://github.com/EJTP/UnifiedMC-Server/releases/latest/download/unifiedmc-server-0.1.0.jar";
+
+/// Returns the java command line that starts the server, without the heap flags.
+async fn install_loader(
+    client: &reqwest::Client,
+    root: &Path,
+    loader: &str,
+    version: &str,
+    minecraft: &str,
+    heap: usize,
+) -> Result<String> {
+    match loader {
+        "fabric" | "quilt" => {
+            let installer = fetch_json_field(
+                client,
+                "https://meta.fabricmc.net/v2/versions/installer",
+                "version",
+            )
+            .await
+            .unwrap_or_else(|| "1.0.1".into());
+            let url = format!(
+                "https://meta.fabricmc.net/v2/versions/loader/{minecraft}/{version}/{installer}/server/jar"
+            );
+            let bytes = fetch(client, &url)
+                .await
+                .with_context(|| format!("fetching the {loader} server from {url}"))?;
+            std::fs::write(root.join("server.jar"), &bytes)?;
+            println!("  {loader} {version} server jar");
+            Ok(format!(
+                "java -Xmx{heap}M -Xms{heap}M -jar server.jar nogui"
+            ))
+        }
+        _ => {
+            let url = if loader == "forge" {
+                format!("https://maven.minecraftforge.net/net/minecraftforge/forge/{version}/forge-{version}-installer.jar")
+            } else {
+                format!("https://maven.neoforged.net/releases/net/neoforged/neoforge/{version}/neoforge-{version}-installer.jar")
+            };
+            let bytes = fetch(client, &url)
+                .await
+                .with_context(|| format!("fetching the {loader} installer from {url}"))?;
+            let installer = root.join("installer.jar");
+            std::fs::write(&installer, &bytes)?;
+            println!("  {loader} {version} installer");
+
+            // The installer writes the libraries and a run script; it needs a JVM here. When
+            // there is none, leave it in place with the one command to run - that is still a
+            // long way short of "go and work out which four things to download".
+            match std::process::Command::new("java")
+                .arg("-jar")
+                .arg("installer.jar")
+                .arg("--install-server")
+                .arg(".")
+                .current_dir(root)
+                .status()
+            {
+                Ok(status) if status.success() => {
+                    std::fs::write(
+                        root.join("user_jvm_args.txt"),
+                        format!(
+                            "# Read by run.sh. One option per line.\n-Xmx{heap}M\n-Xms{heap}M\n"
+                        ),
+                    )?;
+                    let _ = std::fs::remove_file(&installer);
+                    let _ = std::fs::remove_file(root.join("installer.jar.log"));
+                    println!("  installed it");
+                    Ok("sh run.sh nogui".into())
+                }
+                Ok(status) => {
+                    println!("  the installer exited with {status}; run it yourself:");
+                    println!(
+                        "    cd {} && java -jar installer.jar --install-server .",
+                        root.display()
+                    );
+                    Ok("sh run.sh nogui".into())
+                }
+                Err(_) => {
+                    println!("  no java here, so run this on the server before starting it:");
+                    println!("    java -jar installer.jar --install-server .");
+                    Ok("sh run.sh nogui".into())
+                }
+            }
+        }
+    }
+}
+
+async fn fetch_json_field(client: &reqwest::Client, url: &str, field: &str) -> Option<String> {
+    let list: serde_json::Value = client.get(url).send().await.ok()?.json().await.ok()?;
+    list.as_array()?
+        .iter()
+        .find(|entry| entry.get("stable").and_then(|s| s.as_bool()) == Some(true))
+        .or_else(|| list.as_array()?.first())?
+        .get(field)?
+        .as_str()
+        .map(str::to_string)
 }
 
 #[cfg(test)]

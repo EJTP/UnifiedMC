@@ -29,6 +29,15 @@ export async function onSignIn(
 	return listen<SignInPrompt>("unifiedmc://signin", (event) => handler(event.payload));
 }
 
+/** The game's window is up. The command that started it runs until the game ends. */
+export async function onRunning(handler: () => void): Promise<() => void> {
+	if (!inTauri) {
+		return () => {};
+	}
+	const { listen } = await import("@tauri-apps/api/event");
+	return listen("unifiedmc://running", () => handler());
+}
+
 export async function onProgress(handler: (progress: Progress) => void): Promise<() => void> {
 	if (!inTauri) {
 		return () => {};
