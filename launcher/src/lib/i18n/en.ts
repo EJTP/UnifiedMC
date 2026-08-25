@@ -204,6 +204,7 @@ export default {
 	"error.serverNoVersion": "The server answers, but does not say which version it runs.",
 	"error.serverClosedConnection": "The server closed the connection without answering. Big networks throttle status pings — wait a moment and check again.",
 	"error.alreadyOnAServer": "You are already on a server. One account can only be on one server at a time — singleplayer alongside is fine.",
+	"error.accessDeniedHint": "Minecraft is probably still running and holding the file. Close the game and try again. Otherwise: a read-only folder, or an antivirus in the way.",
 	"error.noManifest": "The server publishes no manifest.",
 	"error.noSuchServer": "That server is gone.",
 	"error.noSuchInstance": "That instance is gone.",

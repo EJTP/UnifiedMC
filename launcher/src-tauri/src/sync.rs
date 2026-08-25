@@ -78,7 +78,8 @@ async fn download(client: &reqwest::Client, entry: &ModEntry) -> Result<()> {
 
     let temporary = blobs.join(format!(".{}.part", entry.sha1));
     fs::write(&temporary, &bytes)?;
-    fs::rename(temporary, blobs.join(&entry.sha1))?;
+    let landed = blobs.join(&entry.sha1);
+    fs::rename(&temporary, &landed).with_context(|| format!("storing {}", landed.display()))?;
     Ok(())
 }
 
@@ -185,17 +186,47 @@ pub async fn add(client: &reqwest::Client, entries: &[ModEntry], dir: &Path) -> 
 
 /// Hard link, so the same jar on ten servers costs one copy.
 fn link(from: &Path, to: &Path) -> Result<()> {
-    if to.exists() {
-        fs::remove_file(to)?;
-    }
+    clear(to).with_context(|| format!("replacing {}", to.display()))?;
     match fs::hard_link(from, to) {
         Ok(()) => Ok(()),
         // different filesystem, or one that has no links: a copy is correct, just larger
         Err(_) => {
-            fs::copy(from, to)?;
+            fs::copy(from, to).with_context(|| format!("writing {}", to.display()))?;
             Ok(())
         }
     }
+}
+
+/// Get whatever is at `to` out of the way.
+///
+/// Windows refuses to delete a file another process holds open, one marked read-only, and a
+/// directory handed to remove_file - all three as "Access is denied (os error 5)", with no path
+/// in the message. A running game holding its own jars is the common one, and an antivirus
+/// reading a jar it has just seen appear is the transient one, which is what the retry is for.
+fn clear(to: &Path) -> std::io::Result<()> {
+    let Ok(existing) = fs::symlink_metadata(to) else {
+        return Ok(()); // nothing there
+    };
+
+    if existing.is_dir() {
+        return fs::remove_dir_all(to);
+    }
+    if existing.permissions().readonly() {
+        let mut relaxed = existing.permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        relaxed.set_readonly(false);
+        let _ = fs::set_permissions(to, relaxed);
+    }
+
+    let mut last = fs::remove_file(to);
+    for _ in 0..4 {
+        if last.is_ok() {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        last = fs::remove_file(to);
+    }
+    last
 }
 
 /// Write the server's config into the instance.
@@ -252,7 +283,8 @@ pub async fn config(
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::copy(paths::blobs().join(&entry.sha1), &target)?;
+        fs::copy(paths::blobs().join(&entry.sha1), &target)
+            .with_context(|| format!("writing {}", target.display()))?;
         delivered.insert(entry.path.clone(), entry.sha1.clone());
         written += 1;
     }
@@ -283,6 +315,43 @@ pub fn personal(served: &[ModEntry], folder: &Path) -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    /// Windows reports all three of these as "Access is denied (os error 5)". The directory case
+    /// fails on Linux too, so it is the one this can actually prove here.
+    #[test]
+    fn whatever_is_in_the_way_gets_out_of_the_way() {
+        let dir = std::env::temp_dir().join("unifiedmc-link-test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let source = dir.join("source.jar");
+        fs::write(&source, b"a jar").unwrap();
+
+        // a directory where the jar belongs - remove_file refuses this on every platform
+        let target = dir.join("target.jar");
+        fs::create_dir_all(target.join("something")).unwrap();
+        super::link(&source, &target).expect("a directory in the way");
+        assert_eq!(fs::read(&target).unwrap(), b"a jar");
+
+        // a read-only file, which is what Windows leaves behind often enough to matter.
+        // Removed first: target is a hard link to source now, so writing through it would
+        // change the source as well and the test would be measuring its own mistake.
+        fs::remove_file(&target).unwrap();
+        fs::write(&target, b"old").unwrap();
+        let mut locked = fs::metadata(&target).unwrap().permissions();
+        locked.set_readonly(true);
+        fs::set_permissions(&target, locked).unwrap();
+        super::link(&source, &target).expect("a read-only file in the way");
+        assert_eq!(fs::read(&target).unwrap(), b"a jar");
+
+        // and the ordinary case still works
+        fs::remove_file(&target).unwrap();
+        fs::write(&target, b"old").unwrap();
+        super::link(&source, &target).unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"a jar");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     use super::*;
 
     #[test]

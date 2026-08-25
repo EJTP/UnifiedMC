@@ -26,6 +26,18 @@ export const KINDS: Kind[] = ["mod", "resourcepack", "shader", "datapack"];
 /** Must match PAGE in the Rust side, or "more" skips or repeats results. */
 const PAGE = 40;
 
+/**
+ * An error from the backend, plus what to do about it when we can tell.
+ *
+ * Windows refuses to replace a file another process holds open and reports it as "Access is
+ * denied (os error 5)" - and the process is almost always a Minecraft that is still running.
+ */
+function describe(error: unknown): string {
+	const raw = translate(String(error));
+	const denied = /os error 5|access is denied|zugriff verweigert/i.test(raw);
+	return denied ? `${raw}\n\n${t("error.accessDeniedHint")}` : raw;
+}
+
 /** Everything the window shows. The backend pushes into this; no screen fetches on its own. */
 class LauncherState {
 	view = $state<View>("servers");
@@ -257,7 +269,7 @@ class LauncherState {
 		try {
 			await start();
 		} catch (error) {
-			this.error = translate(String(error));
+			this.error = describe(error);
 		} finally {
 			stop();
 			delete this.running[id];

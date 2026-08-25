@@ -206,6 +206,7 @@ export default {
 	"error.serverNoVersion": "Der Server ist erreichbar, sagt aber nicht welche Version er läuft.",
 	"error.serverClosedConnection": "Der Server hat die Verbindung geschlossen, ohne zu antworten. Große Netzwerke drosseln Status-Abfragen — kurz warten und erneut prüfen.",
 	"error.alreadyOnAServer": "Du bist schon auf einem Server. Ein Konto kann immer nur auf einem Server gleichzeitig spielen — Singleplayer geht daneben.",
+	"error.accessDeniedHint": "Wahrscheinlich läuft Minecraft noch und hält die Datei fest. Beende das Spiel und versuche es erneut. Sonst: Ordner schreibgeschützt oder ein Virenscanner dazwischen.",
 	"error.noManifest": "Der Server veröffentlicht kein Manifest.",
 	"error.noSuchServer": "Diesen Server gibt es nicht mehr.",
 	"error.noSuchInstance": "Diese Instanz gibt es nicht mehr.",

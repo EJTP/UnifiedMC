@@ -98,7 +98,7 @@
 					>
 						<TriangleAlert class="mt-0.5 size-4 shrink-0 text-destructive" />
 						<p
-							class="min-w-0 flex-1 text-xs leading-relaxed break-words text-destructive-foreground/90"
+							class="min-w-0 flex-1 text-xs leading-relaxed break-words whitespace-pre-line text-destructive-foreground/90"
 						>
 							{launcher.error}
 						</p>
