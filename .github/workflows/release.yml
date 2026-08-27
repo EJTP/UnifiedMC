@@ -96,6 +96,30 @@ jobs:
       - run: pnpm install --frozen-lockfile
         working-directory: launcher
 
+      # Before the bundle, not after it. This crate builds two binaries, and Tauri's macOS
+      # bundler copies every one of them into the .app - but "universal-apple-darwin" is not a
+      # real cargo target, so Tauri lipos only the main binary into that directory and the
+      # bundle then fails on the missing second one. Putting it there first is the whole fix.
+      #
+      # Elsewhere this never comes up: a plain `cargo build --release` writes both binaries to
+      # the one directory the bundler reads.
+      - name: Build the server CLI for both architectures
+        working-directory: launcher/src-tauri
+        env:
+          UNIFIEDMC_CF_KEY: ${{ secrets.UNIFIEDMC_CF_KEY }}
+        run: |
+          set -e
+          for arch in aarch64 x86_64; do
+            cargo build --release --bin unifiedmc-server-cli --target "$arch-apple-darwin"
+          done
+          mkdir -p target/universal-apple-darwin/release
+          lipo -create -output target/universal-apple-darwin/release/unifiedmc-server-cli \
+            target/aarch64-apple-darwin/release/unifiedmc-server-cli \
+            target/x86_64-apple-darwin/release/unifiedmc-server-cli
+          # A copy under its own name, for the release page.
+          cp target/universal-apple-darwin/release/unifiedmc-server-cli unifiedmc-server-cli-macos
+          lipo -info unifiedmc-server-cli-macos
+
       - run: pnpm tauri build --target universal-apple-darwin
         working-directory: launcher
         env:
@@ -110,20 +134,6 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
-      # The CLI the same way round: built for both and merged, so the one file beside the app
-      # runs wherever the app does.
-      - name: Build the server CLI for both architectures
-        working-directory: launcher/src-tauri
-        env:
-          UNIFIEDMC_CF_KEY: ${{ secrets.UNIFIEDMC_CF_KEY }}
-        run: |
-          set -e
-          for arch in aarch64 x86_64; do
-            cargo build --release --bin unifiedmc-server-cli --target "$arch-apple-darwin"
-          done
-          lipo -create -output unifiedmc-server-cli-macos \
-            target/aarch64-apple-darwin/release/unifiedmc-server-cli \
-            target/x86_64-apple-darwin/release/unifiedmc-server-cli
 
       - name: Attach the disk image to the release
         env:
