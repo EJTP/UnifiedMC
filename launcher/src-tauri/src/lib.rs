@@ -496,6 +496,7 @@ fn hit_from_jar(
     source: &str,
     on_server: bool,
     installed: bool,
+    removable: bool,
 ) -> catalogue::Hit {
     let filename = jar
         .file_name()
@@ -511,18 +512,21 @@ fn hit_from_jar(
             .map(|i| i.name.clone())
             .filter(|name| !name.is_empty())
             .unwrap_or(filename),
+        // The version moved out of the description and into its own field, so the line under
+        // a title is a description and nothing else.
         description: info
             .as_ref()
-            .map(|i| match (i.version.is_empty(), i.description.is_empty()) {
-                (true, _) => i.description.clone(),
-                (false, true) => i.version.clone(),
-                _ => format!("{}  ·  {}", i.version, i.description),
-            })
+            .map(|i| i.description.clone())
             .unwrap_or_default(),
         downloads: 0,
         source: source.into(),
         on_server,
         installed,
+        author: String::new(),
+        version: info.as_ref().map(|i| i.version.clone()).unwrap_or_default(),
+        // A jar on this disk has no catalogue page to point at.
+        url: String::new(),
+        removable,
         icon: info.and_then(|i| i.icon),
     }
 }
@@ -677,43 +681,65 @@ async fn mods(
     kind: Kind,
     query: String,
     offset: usize,
+    sort: catalogue::Sort,
 ) -> Result<Vec<catalogue::Hit>, String> {
     let client = state.client.clone();
     let (manifest, key) = served(&state, &address).await?;
     let dir = kind.dir();
 
     match tab.as_str() {
-        "pack" => Ok(manifest
-            .entries(dir)
-            .iter()
-            .map(|entry| {
-                // The jar knows its own name and icon; the filename is a last resort. A sha1 out of the
-                // manifest names a blob or nothing at all.
-                let blob = if sync::is_hash(&entry.sha1) {
-                    paths::blobs().join(&entry.sha1)
-                } else {
-                    std::path::PathBuf::new()
-                };
-                let mut hit = hit_from_jar(&blob, "pack", true, false);
-                if hit.title.is_empty() || hit.title == entry.sha1 {
-                    hit.title = entry.name.clone();
-                }
-                hit.id = entry.sha1.clone();
-                hit
-            })
-            .collect()),
-        "installed" => Ok(content_dirs(&address, &key, dir)
-            .iter()
-            .flat_map(|folder| sync::personal(manifest.entries(dir), folder))
-            .map(|file| hit_from_jar(&file, "profile", false, true))
-            .collect()),
+        // One list of what is actually here, whoever put it there: what the server ships
+        // first, then the player's own. Two tabs for that was two places to look for one
+        // answer, and the difference that matters - whether it can be taken away again - is
+        // a property of the row, not of which tab it was found on.
+        "installed" => {
+            let mut here: Vec<catalogue::Hit> = manifest
+                .entries(dir)
+                .iter()
+                .map(|entry| {
+                    // The jar knows its own name and icon; the filename is a last resort. A sha1 out of the
+                    // manifest names a blob or nothing at all.
+                    let blob = if sync::is_hash(&entry.sha1) {
+                        paths::blobs().join(&entry.sha1)
+                    } else {
+                        std::path::PathBuf::new()
+                    };
+                    // The jar knows its own name and icon; the filename is a last resort. A
+                    // sha1 out of the manifest names a blob or nothing at all.
+                    let mut hit = hit_from_jar(&blob, "pack", true, false, false);
+                    if hit.title.is_empty() || hit.title == entry.sha1 {
+                        hit.title = entry.name.clone();
+                    }
+                    hit.id = entry.sha1.clone();
+                    hit
+                })
+                .collect();
+
+            here.extend(
+                content_dirs(&address, &key, dir)
+                    .iter()
+                    .flat_map(|folder| sync::personal(manifest.entries(dir), folder))
+                    .map(|file| hit_from_jar(&file, "profile", false, true, true)),
+            );
+            Ok(here)
+        }
         _ => {
             let catalogue = catalogue::Catalogue {
                 client: &client,
                 cf_key: settings::curseforge_key(),
             };
             let mut hits = catalogue
-                .search(&manifest, kind, &query, PAGE, offset, own_setup(&address))
+                .search(
+                    &manifest,
+                    kind,
+                    catalogue::Search {
+                        query: &query,
+                        limit: PAGE,
+                        offset,
+                        sort,
+                        own_setup: own_setup(&address),
+                    },
+                )
                 .await
                 .map_err(failed)?;
 
@@ -1118,6 +1144,25 @@ fn today() -> playtime::Day {
     playtime::today()
 }
 
+/// A catalogue project's own page, in the player's browser.
+///
+/// Only the two catalogues we search. The url arrives back through the webview, and "open
+/// anything in the browser" is a capability worth keeping pointed somewhere: a hit's link
+/// comes from a third-party API, not from us.
+#[tauri::command]
+fn open_catalogue_page(app: AppHandle, url: String) -> Result<(), String> {
+    const ALLOWED: [&str; 4] = [
+        "https://modrinth.com/",
+        "https://www.modrinth.com/",
+        "https://www.curseforge.com/",
+        "https://curseforge.com/",
+    ];
+    if !ALLOWED.iter().any(|prefix| url.starts_with(prefix)) {
+        return Err("error.notACataloguePage".into());
+    }
+    update::open(&app, &url).map_err(failed)
+}
+
 /* ----------------------------------------------------------------- updates. */
 
 /// Whether GitHub has a newer release than this build. None when it has not, or when it could
@@ -1220,7 +1265,8 @@ pub fn run() {
             check_update,
             open_release,
             playtime,
-            today
+            today,
+            open_catalogue_page
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

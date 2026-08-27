@@ -16,7 +16,6 @@ const MODRINTH: &str = "https://api.modrinth.com/v2";
 const CURSEFORGE: &str = "https://api.curseforge.com/v1";
 
 const CF_GAME_MINECRAFT: u32 = 432;
-const CF_SORT_DOWNLOADS: u32 = 6;
 const CF_REQUIRED_DEPENDENCY: u32 = 3;
 const CF_SHA1: u32 = 1;
 const CF_RELEASE: u32 = 1;
@@ -65,6 +64,16 @@ impl Kind {
     /// CurseForge's class ids, confirmed against
     /// `GET /v1/categories?gameId=432&classesOnly=true` on 2026-08-25: 6 mc-mods,
     /// 12 texture-packs, 6552 shaders, 6945 data-packs.
+    /// What Modrinth calls this in a project url. Not the same words as its search facets.
+    pub fn modrinth_path(&self) -> &'static str {
+        match self {
+            Kind::Mod => "mod",
+            Kind::ResourcePack => "resourcepack",
+            Kind::Shader => "shader",
+            Kind::Datapack => "datapack",
+        }
+    }
+
     fn cf_class(&self) -> u32 {
         match self {
             Kind::Mod => 6,
@@ -119,6 +128,60 @@ fn modrinth_loaders(kind: Kind, loader: &str) -> Option<String> {
     })
 }
 
+/// How a search is ordered. The two catalogues spell these differently, so the name the
+/// interface uses is translated once, here, rather than at both call sites.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Sort {
+    /// What the catalogue thinks the query meant. Meaningless without a query, which is why
+    /// the default is downloads instead.
+    Relevance,
+    #[default]
+    Downloads,
+    Follows,
+    Updated,
+    Newest,
+}
+
+impl Sort {
+    fn modrinth(self) -> &'static str {
+        match self {
+            Sort::Relevance => "relevance",
+            Sort::Downloads => "downloads",
+            Sort::Follows => "follows",
+            Sort::Updated => "updated",
+            Sort::Newest => "newest",
+        }
+    }
+
+    /// CurseForge numbers its sort fields, and has no "follows" - popularity is the nearest
+    /// thing it offers.
+    fn curseforge(self) -> u32 {
+        match self {
+            Sort::Relevance => 1,
+            Sort::Downloads => 6,
+            Sort::Follows => 2,
+            Sort::Updated => 3,
+            Sort::Newest => 11,
+        }
+    }
+}
+
+/// What to ask the catalogue for, beyond which manifest and which kind.
+///
+/// Grouped rather than passed one after another: `limit` and `offset` are both a `usize`, and
+/// swapping them at a call site pages the catalogue wrongly without failing anywhere.
+#[derive(Clone, Copy, Debug)]
+pub struct Search<'a> {
+    pub query: &'a str,
+    pub limit: usize,
+    pub offset: usize,
+    pub sort: Sort,
+    /// No server on the other side, so the client-side filter would only hide most of the
+    /// catalogue for no reason.
+    pub own_setup: bool,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Hit {
     pub id: String,
@@ -132,6 +195,18 @@ pub struct Hit {
     #[serde(default)]
     pub installed: bool,
     pub icon: Option<String>,
+    /// Who wrote it. A title alone does not tell two mods of the same name apart.
+    #[serde(default)]
+    pub author: String,
+    /// The build that would be installed, so what arrives is not a surprise.
+    #[serde(default)]
+    pub version: String,
+    /// The project's own page. Nothing here is a substitute for reading it.
+    #[serde(default)]
+    pub url: String,
+    /// Whether this one can be taken away again. What the server ships cannot.
+    #[serde(default)]
+    pub removable: bool,
 }
 
 /// Can one player add this and have it work? Only if the server does not have to carry it too.
@@ -418,16 +493,11 @@ impl Catalogue<'_> {
         self.modrinth_side(slug).await
     }
 
-    /// `own_setup`: no server on the other side, so the client-side filter would only hide most of
-    /// the catalogue for no reason.
     pub async fn search(
         &self,
         manifest: &Manifest,
         kind: Kind,
-        query: &str,
-        limit: usize,
-        offset: usize,
-        own_setup: bool,
+        wanted: Search<'_>,
     ) -> Result<Vec<Hit>> {
         let loader = manifest
             .loader
@@ -442,10 +512,10 @@ impl Catalogue<'_> {
             .modrinth(
                 "/search",
                 &[
-                    ("query", query.to_string()),
-                    ("limit", limit.to_string()),
-                    ("offset", offset.to_string()),
-                    ("index", "downloads".into()),
+                    ("query", wanted.query.to_string()),
+                    ("limit", wanted.limit.to_string()),
+                    ("offset", wanted.offset.to_string()),
+                    ("index", wanted.sort.modrinth().to_string()),
                     ("facets", serde_json::to_string(&facets)?),
                 ],
             )
@@ -459,7 +529,11 @@ impl Catalogue<'_> {
             for hit in hits {
                 let project_id = hit.get("project_id").and_then(|v| v.as_str()).unwrap_or("");
                 let on_server = served.contains(project_id);
-                if kind == Kind::Mod && !own_setup && !on_server && modrinth_verdict(hit) != "yes" {
+                if kind == Kind::Mod
+                    && !wanted.own_setup
+                    && !on_server
+                    && modrinth_verdict(hit) != "yes"
+                {
                     continue;
                 }
                 let title = hit
@@ -468,12 +542,16 @@ impl Catalogue<'_> {
                     .unwrap_or("")
                     .to_string();
                 seen.insert(title.to_lowercase());
+                let slug = hit
+                    .get("slug")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 found.push(Hit {
-                    id: hit
-                        .get("slug")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
+                    // Modrinth's own url is the project type plus the slug, and the type is
+                    // what the tab already decided.
+                    url: format!("https://modrinth.com/{}/{slug}", kind.modrinth_path()),
+                    id: slug,
                     title,
                     description: hit
                         .get("description")
@@ -488,32 +566,41 @@ impl Catalogue<'_> {
                         .get("icon_url")
                         .and_then(|v| v.as_str())
                         .map(str::to_string),
+                    author: hit
+                        .get("author")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    version: hit
+                        .get("latest_version")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    // Nothing in the catalogue is installed yet, so nothing is removable yet.
+                    removable: false,
                 });
             }
         }
 
         if !self.cf_key.is_empty() {
-            found.extend(
-                self.search_curseforge(manifest, kind, query, limit, offset, &seen, own_setup)
-                    .await,
-            );
+            found.extend(self.search_curseforge(manifest, kind, wanted, &seen).await);
         }
 
-        found.sort_by_key(|hit| std::cmp::Reverse(hit.downloads));
+        // Two catalogues, one list. Only a download order can be merged meaningfully - for
+        // anything else each side is already ordered and interleaving by a field we did not
+        // fetch would be a guess, so they stay as they came.
+        if wanted.sort == Sort::Downloads {
+            found.sort_by_key(|hit| std::cmp::Reverse(hit.downloads));
+        }
         Ok(found)
     }
 
-    // A private helper mirroring search()'s parameters; a struct for the lint alone earns nothing.
-    #[allow(clippy::too_many_arguments)]
     async fn search_curseforge(
         &self,
         manifest: &Manifest,
         kind: Kind,
-        query: &str,
-        limit: usize,
-        offset: usize,
+        wanted: Search<'_>,
         seen: &HashSet<String>,
-        own_setup: bool,
     ) -> Vec<Hit> {
         let loader = manifest
             .loader
@@ -525,11 +612,11 @@ impl Catalogue<'_> {
             ("gameId", CF_GAME_MINECRAFT.to_string()),
             ("classId", kind.cf_class().to_string()),
             ("gameVersion", manifest.minecraft.clone()),
-            ("searchFilter", query.to_string()),
-            ("sortField", CF_SORT_DOWNLOADS.to_string()),
+            ("searchFilter", wanted.query.to_string()),
+            ("sortField", wanted.sort.curseforge().to_string()),
             ("sortOrder", "desc".into()),
-            ("pageSize", limit.to_string()),
-            ("index", offset.to_string()),
+            ("pageSize", wanted.limit.to_string()),
+            ("index", wanted.offset.to_string()),
         ];
         // One loader even with Connector in the pack: CurseForge takes a single modLoaderType, and
         // dropping it would pull in Forge-only mods. Modrinth, which takes a list, is widened instead.
@@ -573,7 +660,7 @@ impl Catalogue<'_> {
                         self.cf_verdict_looked_up(id, slug, manifest).await
                     }
                 };
-                if !own_setup && verdict != "yes" {
+                if !wanted.own_setup && verdict != "yes" {
                     continue;
                 }
             }
@@ -597,6 +684,31 @@ impl Catalogue<'_> {
                     .and_then(|l| l.get("thumbnailUrl"))
                     .and_then(|v| v.as_str())
                     .map(str::to_string),
+                author: hit
+                    .get("authors")
+                    .and_then(|a| a.as_array())
+                    .and_then(|authors| authors.first())
+                    .and_then(|a| a.get("name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                // The newest file's display name. CurseForge has no "latest version" field,
+                // and the file list is newest last.
+                version: hit
+                    .get("latestFiles")
+                    .and_then(|f| f.as_array())
+                    .and_then(|files| files.last())
+                    .and_then(|f| f.get("displayName"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                url: hit
+                    .get("links")
+                    .and_then(|l| l.get("websiteUrl"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                removable: false,
             });
         }
         out

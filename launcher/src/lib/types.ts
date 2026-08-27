@@ -90,6 +90,14 @@ export interface Hit {
 	on_server: boolean;
 	installed: boolean;
 	icon: string | null;
+	/** Who wrote it. A title alone does not tell two mods of the same name apart. */
+	author: string;
+	/** The build that would be installed, so what arrives is not a surprise. */
+	version: string;
+	/** The project's own page, or empty for a jar already on this disk. */
+	url: string;
+	/** Whether it can be taken away again. What the server ships cannot. */
+	removable: boolean;
 }
 
 /** One run of the server description, already styled the way the game would draw it. */

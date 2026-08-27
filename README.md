@@ -208,6 +208,14 @@ play, and offers only mods a single player can actually add — a mod marked
 `server_side: required` needs the server to carry it too, so it is left out. What the server
 already ships is marked rather than hidden.
 
+Two tabs: the catalogue, and what is actually here. The second merges what the server ships
+with what you added yourself, because that is one question; whether a thing can be taken away
+again is a property of the row, not of which tab you found it on. Every row carries its own
+Install or Remove button — there is no selection mode, so a highlight cannot mean "install"
+on one tab and "delete" on another. Rows say who wrote it, which build, where it came from and
+how many downloads, and link out to the project's own page. The catalogue can be ordered by
+best match, downloads, followers, recently updated or newest.
+
 ## Settings
 
 Memory is a slider in 512 MB steps with an automatic mode that follows the size of the pack,

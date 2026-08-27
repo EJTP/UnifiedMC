@@ -29,7 +29,17 @@ import type {
 /** Which list the window is showing. */
 export type View = "servers" | "instances" | "hosting";
 
-export type Tab = "search" | "installed" | "pack";
+/**
+ * Two, not three. "What the server ships" and "what I added" were separate tabs answering one
+ * question - what is actually here - and the difference that matters, whether a thing can be
+ * taken away again, belongs to the row rather than to the tab it was found on.
+ */
+export type Tab = "search" | "installed";
+
+/** How the catalogue is ordered. Must match the Sort enum on the Rust side. */
+export type Sort = "relevance" | "downloads" | "follows" | "updated" | "newest";
+
+export const SORTS: Sort[] = ["relevance", "downloads", "follows", "updated", "newest"];
 
 /** What a row in the browser is: the four things a manifest and a catalogue both know about. */
 export type { Kind };
@@ -533,9 +543,14 @@ class LauncherState {
 	/** What the server lets a player add on top of what it ships. All four until it says otherwise. */
 	allowedKinds = $state<Kind[]>([...KINDS]);
 	hits = $state<Hit[]>([]);
-	picked = $state<Set<string>>(new Set());
 	loadingMods = $state(false);
 	note = $state("");
+	/** How the catalogue is ordered. Downloads by default; relevance means nothing empty. */
+	sort = $state<Sort>("downloads");
+	/** The one row being installed or removed right now, so only its own button spins. */
+	working = $state<string | null>(null);
+	/** Narrows the installed list. Client-side: it is a folder, not a catalogue. */
+	installedFilter = $state("");
 
 	/** The mod browser works against a server or an instance; both name an address to ask. */
 	openInstanceMods(instance: Instance) {
@@ -553,8 +568,9 @@ class LauncherState {
 		this.tab = "search";
 		this.kind = "mod";
 		this.allowedKinds = [...KINDS];
-		this.picked = new Set();
 		this.note = "";
+		this.sort = "downloads";
+		this.installedFilter = "";
 		void this.loadAllowedKinds(server.address);
 		void this.loadMods("");
 	}
@@ -580,14 +596,18 @@ class LauncherState {
 
 	async switchTab(tab: Tab) {
 		this.tab = tab;
-		this.picked = new Set();
+		this.installedFilter = "";
 		await this.loadMods("");
 	}
 
-	/** A selection is a list of ids in one category; carrying it across would install nonsense. */
+	async setSort(sort: Sort) {
+		if (sort === this.sort) return;
+		this.sort = sort;
+		await this.loadMods(this.query);
+	}
+
 	async switchKind(kind: Kind) {
 		this.kind = kind;
-		this.picked = new Set();
 		await this.loadMods("");
 	}
 
@@ -612,7 +632,8 @@ class LauncherState {
 				tab: this.tab,
 				kind: this.kind,
 				query,
-				offset: this.#offset
+				offset: this.#offset,
+				sort: this.sort
 			});
 			if (mine !== this.#request) return;
 
@@ -638,49 +659,73 @@ class LauncherState {
 		return this.loadMods(this.query, true);
 	}
 
-	toggle(id: string) {
-		const next = new Set(this.picked);
-		next.has(id) ? next.delete(id) : next.add(id);
-		this.picked = next;
-	}
-
-	async applyMods() {
-		if (!this.browsing || this.picked.size === 0) return;
-		const ids = [...this.picked];
-		this.loadingMods = true;
+	/**
+	 * Install one, now.
+	 *
+	 * A row and its button rather than a selection and a footer: the old flow had one
+	 * highlight meaning "will be installed" on one tab and "will be deleted" on another, and
+	 * no way to tell them apart but the colour of a button somewhere else.
+	 */
+	async install(hit: Hit) {
+		if (!this.browsing || this.working) return;
+		this.working = hit.id;
+		this.note = "";
 		try {
-			let said: string;
-			if (this.tab === "installed") {
-				const gone = await call<string[]>("remove_mods", {
-					address: this.browsing.address,
-					kind: this.kind,
-					names: ids
-				});
-				said =
-					gone.length > 0 ? t("mods.removedCount", { count: gone.length }) : t("mods.removedNone");
-			} else {
-				const added = await call<string[]>("install_mods", {
-					address: this.browsing.address,
-					kind: this.kind,
-					ids
-				});
-				// zero is not success: the catalogue had nothing for this version and said so by
-				// handing back an empty list
-				said =
-					added.length > 0
-						? t("mods.installedCount", { count: added.length })
-						: t("mods.installedNone");
+			const added = await call<string[]>("install_mods", {
+				address: this.browsing.address,
+				kind: this.kind,
+				ids: [hit.id]
+			});
+			// Zero is not success: the catalogue had nothing for this version and said so by
+			// handing back an empty list.
+			if (added.length === 0) {
+				this.note = t("mods.installedNone");
+				return;
 			}
-			this.picked = new Set();
-			// After the reload, not before it: loadMods clears the note on its way in, so a
-			// message set first is wiped before the player ever reads it.
-			await this.loadMods("");
-			this.note = said;
+			// What arrived beyond what was asked for. Iris without Sodium is a crash, so the
+			// backend pulls dependencies - and the player should be told it did.
+			this.note =
+				added.length > 1
+					? t("mods.installedWithDeps", { name: hit.title, count: added.length - 1 })
+					: t("mods.installedOne", { name: hit.title });
+			this.markInstalled(hit.id);
 		} catch (error) {
 			this.note = translate(String(error));
 		} finally {
-			this.loadingMods = false;
+			this.working = null;
 		}
+	}
+
+	/** Take one away again. Named apart from `remove`, which removes a whole server. */
+	async uninstall(hit: Hit) {
+		if (!this.browsing || this.working) return;
+		this.working = hit.id;
+		this.note = "";
+		try {
+			const gone = await call<string[]>("remove_mods", {
+				address: this.browsing.address,
+				kind: this.kind,
+				names: [hit.id]
+			});
+			if (gone.length === 0) {
+				this.note = t("mods.removedNone");
+				return;
+			}
+			this.note = t("mods.removedOne", { name: hit.title });
+			this.hits = this.hits.filter((row) => row.id !== hit.id);
+		} catch (error) {
+			this.note = translate(String(error));
+		} finally {
+			this.working = null;
+		}
+	}
+
+	/**
+	 * Mark the row done without refetching. Reloading the whole catalogue to change one badge
+	 * loses the player's place in a list they were reading.
+	 */
+	markInstalled(id: string) {
+		this.hits = this.hits.map((hit) => (hit.id === id ? { ...hit, installed: true } : hit));
 	}
 
 	/**

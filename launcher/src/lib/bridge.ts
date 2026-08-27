@@ -168,24 +168,23 @@ function sample(command: string, args: Record<string, unknown>): unknown {
 			const tab = String(args.tab);
 			const kind = String(args.kind ?? "mod");
 			const suffix = kind === "mod" ? ".jar" : ".zip";
-			if (tab === "pack") {
-				const shipped = shippedByKind[kind] ?? 0;
-				return Array.from({ length: shipped }, (_, i) => ({
-					id: `${kind}-${i}`, title: `${kind}-${i}${suffix}`, description: "",
-					downloads: 0, source: "pack", on_server: true, installed: false, icon: null
-				}));
-			}
+			// One list of what is actually here: the server's first, then the player's own.
 			if (tab === "installed") {
-				return kind === "mod"
-					? [
-							{ id: "simplerpc.jar", title: "SimpleRPC-4.1.4.jar", description: "in deinem Profil",
-							  downloads: 0, source: "profile", on_server: false, installed: false, icon: null }
-						]
-					: [
-							{ id: `eigenes-${kind}${suffix}`, title: `Eigenes ${kind}${suffix}`,
-							  description: "in deinem Profil", downloads: 0, source: "profile",
-							  on_server: false, installed: false, icon: null }
-						];
+				const shipped = shippedByKind[kind] ?? 0;
+				return [
+					...Array.from({ length: shipped }, (_, i) => ({
+						id: `${kind}-${i}`, title: `${kind}-${i}${suffix}`, description: "",
+						downloads: 0, source: "pack", on_server: true, installed: false, icon: null,
+						author: "", version: "1.4.2", url: "", removable: false
+					})),
+					{
+						id: kind === "mod" ? "simplerpc.jar" : `eigenes-${kind}${suffix}`,
+						title: kind === "mod" ? "SimpleRPC" : `Eigenes ${kind}`,
+						description: "", downloads: 0, source: "profile",
+						on_server: false, installed: true, icon: null,
+						author: "", version: "4.1.4", url: "", removable: true
+					}
+				];
 			}
 			const page = Number(args.offset ?? 0) / 40;
 			const catalogue = catalogues[kind] ?? catalogues.mod;
@@ -350,6 +349,10 @@ type SampleHit = {
 	on_server: boolean;
 	installed: boolean;
 	icon: string | null;
+	author: string;
+	version: string;
+	url: string;
+	removable: boolean;
 };
 
 /** One page per category, so every category shows something without a Rust build. */
@@ -357,47 +360,47 @@ const catalogues: Record<string, SampleHit[]> = {
 	mod: [
 		{ id: "sodium", title: "Sodium", description: "Moderne Rendering-Engine, deutlich mehr FPS",
 		  downloads: 42_000_000, source: "modrinth", on_server: true, installed: false,
-		  icon: "https://cdn.modrinth.com/data/AANobbMI/icon.png" },
+		  icon: "https://cdn.modrinth.com/data/AANobbMI/icon.png" , author: "somebody", version: "1.0.0", url: "https://modrinth.com/mod/x", removable: false },
 		{ id: "iris", title: "Iris Shaders", description: "Shader-Unterstützung, kompatibel mit Sodium",
 		  downloads: 28_000_000, source: "modrinth", on_server: false, installed: false,
-		  icon: "https://cdn.modrinth.com/data/YL57xq9U/icon.png" },
+		  icon: "https://cdn.modrinth.com/data/YL57xq9U/icon.png" , author: "somebody", version: "1.0.0", url: "https://modrinth.com/mod/x", removable: false },
 		{ id: "cf:263420", title: "Xaero's Minimap", description: "Karte in der Ecke",
 		  downloads: 241_000_000, source: "curseforge", on_server: true, installed: false,
-		  icon: "https://media.forgecdn.net/avatars/thumbnails/175/905/64/64/636426383151327212.png" },
+		  icon: "https://media.forgecdn.net/avatars/thumbnails/175/905/64/64/636426383151327212.png" , author: "somebody", version: "1.0.0", url: "https://modrinth.com/mod/x", removable: false },
 		{ id: "chat-heads", title: "Chat Heads", description: "Zeigt den Kopf des Absenders im Chat",
 		  downloads: 9_400_000, source: "modrinth", on_server: false, installed: false,
-		  icon: "https://cdn.modrinth.com/data/Wb5oqrBJ/icon.png" },
+		  icon: "https://cdn.modrinth.com/data/Wb5oqrBJ/icon.png" , author: "somebody", version: "1.0.0", url: "https://modrinth.com/mod/x", removable: false },
 		{ id: "appleskin", title: "AppleSkin", description: "Zeigt Sättigung und Nährwerte an",
 		  downloads: 31_000_000, source: "modrinth", on_server: false, installed: false,
-		  icon: "https://cdn.modrinth.com/data/EsAfCjCV/icon.png" },
+		  icon: "https://cdn.modrinth.com/data/EsAfCjCV/icon.png" , author: "somebody", version: "1.0.0", url: "https://modrinth.com/mod/x", removable: false },
 		{ id: "jei", title: "Just Enough Items", description: "Rezepte nachschlagen",
 		  downloads: 88_000_000, source: "modrinth", on_server: false, installed: false,
-		  icon: "https://cdn.modrinth.com/data/u6dRKJwZ/icon.png" }
+		  icon: "https://cdn.modrinth.com/data/u6dRKJwZ/icon.png" , author: "somebody", version: "1.0.0", url: "https://modrinth.com/mod/x", removable: false }
 	],
 	resourcepack: [
 		{ id: "faithful", title: "Faithful 32x", description: "Vanilla, nur doppelt so scharf",
-		  downloads: 12_000_000, source: "modrinth", on_server: false, installed: false, icon: null },
+		  downloads: 12_000_000, source: "modrinth", on_server: false, installed: false, icon: null , author: "somebody", version: "1.0.0", url: "https://modrinth.com/mod/x", removable: false },
 		{ id: "cf:409223", title: "Stay True", description: "Vanilla-Optik, weichere Texturen",
-		  downloads: 3_100_000, source: "curseforge", on_server: false, installed: false, icon: null },
+		  downloads: 3_100_000, source: "curseforge", on_server: false, installed: false, icon: null , author: "somebody", version: "1.0.0", url: "https://modrinth.com/mod/x", removable: false },
 		{ id: "bare-bones", title: "Bare Bones", description: "Flach und ohne Rauschen, wie im Trailer",
-		  downloads: 2_400_000, source: "modrinth", on_server: false, installed: false, icon: null }
+		  downloads: 2_400_000, source: "modrinth", on_server: false, installed: false, icon: null , author: "somebody", version: "1.0.0", url: "https://modrinth.com/mod/x", removable: false }
 	],
 	shader: [
 		{ id: "complementary-unbound", title: "Complementary Unbound",
 		  description: "Vielseitig, läuft auch auf schwächeren Karten",
-		  downloads: 21_000_000, source: "modrinth", on_server: false, installed: false, icon: null },
+		  downloads: 21_000_000, source: "modrinth", on_server: false, installed: false, icon: null , author: "somebody", version: "1.0.0", url: "https://modrinth.com/mod/x", removable: false },
 		{ id: "bsl", title: "BSL Shaders", description: "Warme Farben, sehr verbreitet",
-		  downloads: 15_000_000, source: "modrinth", on_server: false, installed: false, icon: null },
+		  downloads: 15_000_000, source: "modrinth", on_server: false, installed: false, icon: null , author: "somebody", version: "1.0.0", url: "https://modrinth.com/mod/x", removable: false },
 		{ id: "cf:429026", title: "Sildur's Vibrant Shaders", description: "Von sparsam bis extrem",
-		  downloads: 9_800_000, source: "curseforge", on_server: false, installed: false, icon: null }
+		  downloads: 9_800_000, source: "curseforge", on_server: false, installed: false, icon: null , author: "somebody", version: "1.0.0", url: "https://modrinth.com/mod/x", removable: false }
 	],
 	datapack: [
 		{ id: "terralith", title: "Terralith", description: "Über hundert neue Biome, ohne Mod",
-		  downloads: 7_600_000, source: "modrinth", on_server: false, installed: false, icon: null },
+		  downloads: 7_600_000, source: "modrinth", on_server: false, installed: false, icon: null , author: "somebody", version: "1.0.0", url: "https://modrinth.com/mod/x", removable: false },
 		{ id: "incendium", title: "Incendium", description: "Neuer Nether mit eigenen Strukturen",
-		  downloads: 2_900_000, source: "modrinth", on_server: false, installed: false, icon: null },
+		  downloads: 2_900_000, source: "modrinth", on_server: false, installed: false, icon: null , author: "somebody", version: "1.0.0", url: "https://modrinth.com/mod/x", removable: false },
 		{ id: "vanilla-tweaks", title: "Vanilla Tweaks", description: "Kleine Rezepte und Komfort",
-		  downloads: 1_800_000, source: "modrinth", on_server: false, installed: false, icon: null }
+		  downloads: 1_800_000, source: "modrinth", on_server: false, installed: false, icon: null , author: "somebody", version: "1.0.0", url: "https://modrinth.com/mod/x", removable: false }
 	]
 };
 
