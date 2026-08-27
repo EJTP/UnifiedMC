@@ -1,10 +1,24 @@
-import { call, onProgress, onRunning, onSignIn } from "./bridge";
+import {
+	call,
+	onClosing,
+	onConsole,
+	onHosts,
+	onProgress,
+	onRunning,
+	onSignIn,
+	pickPack
+} from "./bridge";
 import { locale, resolveLocale, t, translate } from "./i18n.svelte";
+import { applyAccent } from "./theme";
 import type {
+	ConsoleLine,
 	Hit,
+	HostedServer,
 	Instance,
 	Kind,
+	Played,
 	Progress,
+	Release,
 	SavedServer,
 	ServerStatus,
 	Session,
@@ -12,8 +26,8 @@ import type {
 	SignInPrompt
 } from "./types";
 
-/** Which of the two halves the window is showing. */
-export type View = "servers" | "instances";
+/** Which list the window is showing. */
+export type View = "servers" | "instances" | "hosting";
 
 export type Tab = "search" | "installed" | "pack";
 
@@ -25,6 +39,9 @@ export const KINDS: Kind[] = ["mod", "resourcepack", "shader", "datapack"];
 
 /** Must match PAGE in the Rust side, or "more" skips or repeats results. */
 const PAGE = 40;
+
+/** How much console to keep in the window. Rust keeps its own, larger, buffer. */
+const SCROLLBACK = 600;
 
 /**
  * An error from the backend, plus what to do about it when we can tell.
@@ -50,7 +67,8 @@ class LauncherState {
 		offline_name: "Player",
 		keep_open: true,
 		jvm_profile: "balanced",
-		jvm_args: ""
+		jvm_args: "",
+		accent: "violet"
 	});
 	session = $state<Session | null>(null);
 	progress = $state<Progress | null>(null);
@@ -70,6 +88,32 @@ class LauncherState {
 	error = $state<string | null>(null);
 	/** Whether the stored lists have arrived. Before that, empty means "not read yet". */
 	booted = $state(false);
+
+	/** Servers this machine runs. Kept whole rather than merged into `servers`: one is an
+	 * address somebody else owns, the other is a process this window can stop. */
+	hosts = $state<HostedServer[]>([]);
+	/** Which hosted server's console is open, if one is. */
+	watching = $state<string | null>(null);
+	/** What that console has said. Replaced wholesale when the drawer opens, appended after. */
+	consoleLines = $state<string[]>([]);
+	/** A newer release on GitHub, once the check has answered. */
+	release = $state<Release | null>(null);
+	/** Whether the player has dismissed the update banner for this run. */
+	updateDismissed = $state(false);
+
+	/** The window is closing and waiting for the servers it started to save their worlds. */
+	closing = $state(false);
+
+	/** What the list is filtered to. One box, whichever list is showing. */
+	filter = $state("");
+
+	/** How much memory this machine has, so no picker may offer more than exists. */
+	machineMemory = $state(0);
+
+	/** How long everything has been played, keyed "server:<address>" / "instance:<id>". */
+	playtime = $state<Record<string, Played>>({});
+	/** Today where the player is, so a trend ends on today rather than on its last session. */
+	today = $state(Math.floor(Date.now() / 86_400_000));
 
 	async start() {
 		let boot;
@@ -105,11 +149,206 @@ class LauncherState {
 		// both need the network, so neither may hold up the first paint
 		void call<string | null>("player_head").then((head) => (this.playerHead = head));
 		void this.loadVersions();
+		// A hosted server that started or stopped is a row that has to change, and the process
+		// that did it is not the one this window asked.
+		await onHosts(() => void this.loadHosts());
+		await onClosing(() => (this.closing = true));
+		await onConsole((line: ConsoleLine) => {
+			if (line.id !== this.watching) return;
+			this.consoleLines = [...this.consoleLines, line.line].slice(-SCROLLBACK);
+		});
+
+		void this.loadHosts();
+		void call<number>("machine_memory").then((mb) => (this.machineMemory = mb));
+		void this.loadPlaytime();
+		// Last, and never fatal: an out-of-date launcher still works, and GitHub being down
+		// is not something to put on the screen.
+		void call<Release | null>("check_update")
+			.then((release) => (this.release = release))
+			.catch(() => {});
+
 		void call<Instance[]>("instances")
 			.then((list) => (this.instances = list))
 			// however it went, the lists are as full as they are going to get - an empty screen
 			// may say so now
 			.finally(() => (this.booted = true));
+	}
+
+	/* ---------------------------------------------------------------- playtime. */
+
+	async loadPlaytime() {
+		try {
+			const [book, today] = await Promise.all([
+				call<Record<string, Played>>("playtime"),
+				call<number>("today")
+			]);
+			this.playtime = book ?? {};
+			// The backend owns "today" because it owns the buckets; a webview left open across
+			// midnight would otherwise draw the trend one day short.
+			if (typeof today === "number") this.today = today;
+		} catch {
+			// A launcher with no playtime figures is a launcher, not a broken one.
+		}
+	}
+
+	played(key: string): Played | undefined {
+		return this.playtime[key];
+	}
+
+	/* ------------------------------------------------------------------ hosting. */
+
+	async loadHosts() {
+		try {
+			this.hosts = await call<HostedServer[]>("hosts");
+		} catch (error) {
+			this.error = translate(String(error));
+		}
+	}
+
+	/** Ask for the file, then build. Returns whether anything was made. */
+	async pickPack(): Promise<string | null> {
+		return pickPack(t("host.pickPack"));
+	}
+
+	async createHost(spec: {
+		name: string;
+		minecraft: string;
+		loader: string | null;
+		loaderVersion: string | null;
+		port: number;
+		memory: number;
+		eula: boolean;
+		publish: boolean;
+		pack: string | null;
+	}): Promise<boolean> {
+		if (this.busyHosting) return false;
+		this.busyHosting = true;
+		this.error = null;
+		// The same overlay a launch uses: importing a pack is the same four hundred megabytes.
+		this.progress = { phase: t("host.building"), detail: spec.name, done: 0, total: 0 };
+		try {
+			this.hosts = await call<HostedServer[]>("create_host", {
+				name: spec.name,
+				minecraft: spec.minecraft,
+				loader: spec.loader,
+				loaderVersion: spec.loaderVersion,
+				port: spec.port,
+				memory: spec.memory,
+				eula: spec.eula,
+				publish: spec.publish,
+				pack: spec.pack
+			});
+			return true;
+		} catch (error) {
+			this.error = describe(error);
+			return false;
+		} finally {
+			this.busyHosting = false;
+			this.progress = null;
+		}
+	}
+
+	/** One build at a time: two at once would fight over the same downloads and the overlay. */
+	busyHosting = $state(false);
+	/** Which hosted server is mid start or stop, so its button can say so. */
+	switching = $state<string | null>(null);
+
+	async startHost(id: string) {
+		if (this.switching) return;
+		this.switching = id;
+		this.error = null;
+		try {
+			await call("start_host", { id });
+			this.watch(id);
+		} catch (error) {
+			this.error = describe(error);
+		} finally {
+			this.switching = null;
+			await this.loadHosts();
+		}
+	}
+
+	async stopHost(id: string) {
+		if (this.switching) return;
+		this.switching = id;
+		try {
+			await call("stop_host", { id });
+		} catch (error) {
+			this.error = describe(error);
+		} finally {
+			this.switching = null;
+		}
+	}
+
+	/** The last resort. The card says what it costs before it offers this. */
+	async killHost(id: string) {
+		try {
+			await call("kill_host", { id });
+		} catch (error) {
+			this.error = describe(error);
+		}
+		await this.loadHosts();
+	}
+
+	async removeHost(id: string, deleteFiles: boolean) {
+		try {
+			this.hosts = await call<HostedServer[]>("remove_host", { id, deleteFiles });
+			if (this.watching === id) this.unwatch();
+		} catch (error) {
+			this.error = describe(error);
+		}
+	}
+
+	/** Open the console on one server, filling it with whatever it has already said. */
+	async watch(id: string) {
+		this.watching = id;
+		this.consoleLines = await call<string[]>("host_console", { id });
+	}
+
+	unwatch() {
+		this.watching = null;
+		this.consoleLines = [];
+	}
+
+	async sendCommand(id: string, line: string) {
+		// Echoed straight away: a server takes a moment to answer, and a console that shows
+		// nothing until it does reads as one that dropped the command.
+		this.consoleLines = [...this.consoleLines, `> ${line}`].slice(-SCROLLBACK);
+		try {
+			await call("host_command", { id, line });
+		} catch (error) {
+			this.error = describe(error);
+		}
+	}
+
+	async openHostDir(id: string) {
+		try {
+			await call("open_host_dir", { id });
+		} catch (error) {
+			this.error = describe(error);
+		}
+	}
+
+	/** The mod browser, pointed at a server this machine runs rather than one on the network. */
+	openHostMods(server: HostedServer) {
+		this.openMods({
+			id: server.id,
+			name: server.name,
+			address: `host-${server.id}`,
+			loader: server.loader,
+			minecraft: server.minecraft
+		});
+	}
+
+	/* ------------------------------------------------------------------ updates. */
+
+	async openRelease() {
+		if (!this.release) return;
+		try {
+			await call("open_release", { url: this.release.download ?? this.release.url });
+		} catch (error) {
+			this.error = translate(String(error));
+		}
 	}
 
 	/**
@@ -118,6 +357,8 @@ class LauncherState {
 	 */
 	show(view: View) {
 		this.view = view;
+		// A filter typed for one list would silently empty the next one.
+		this.filter = "";
 		if (this.browsing) this.closeMods();
 	}
 
@@ -275,6 +516,8 @@ class LauncherState {
 			delete this.running[id];
 			if (this.playing === id) this.playing = null;
 			this.progress = null;
+			// The session's length is only known now, and it is what the row above will show.
+			void this.loadPlaytime();
 		}
 	}
 
@@ -515,9 +758,10 @@ class LauncherState {
 		this.applyLanguage();
 	}
 
-	/** Put the chosen language into effect. Every screen reads it through t(). */
+	/** Put the chosen language and accent into effect. Every screen reads both through them. */
 	applyLanguage() {
 		locale.current = resolveLocale(this.settings.language ?? "system");
+		applyAccent(this.settings.accent ?? "violet");
 	}
 }
 

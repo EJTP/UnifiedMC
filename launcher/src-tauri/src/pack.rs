@@ -404,6 +404,141 @@ pub async fn resolve_unknown_sides(client: &reqwest::Client, pack: &mut Pack) ->
     moved
 }
 
+/// Turn the `cf://<project>/<file>` placeholders a CurseForge manifest leaves behind into real
+/// paths and download links.
+///
+/// A CurseForge manifest names ids and nothing else - not a filename, not a hash, not even
+/// which folder the file belongs in. Two bulk calls answer all of it: the files say what they
+/// are called and where they live, the projects say which category they are. Needs an API key;
+/// without one every entry stays a placeholder and the caller has to say so.
+///
+/// Returns how many were resolved. Anything the author opted out of third-party distribution
+/// for is moved to `blocked`, because silently dropping it makes a pack that starts and then
+/// crashes on a missing dependency.
+pub async fn resolve_curseforge(client: &reqwest::Client, key: &str, pack: &mut Pack) -> usize {
+    /// What CurseForge calls each of its categories, and where a file of that class goes.
+    fn folder(class: u64) -> &'static str {
+        match class {
+            12 => "resourcepacks",
+            6552 => "shaderpacks",
+            6945 => "datapacks",
+            _ => "mods",
+        }
+    }
+
+    let wanted: Vec<(usize, u64, u64)> = pack
+        .files
+        .iter()
+        .enumerate()
+        .filter_map(|(index, file)| {
+            let rest = file.path.strip_prefix("cf://")?;
+            let (project, id) = rest.split_once('/')?;
+            Some((index, project.parse().ok()?, id.parse().ok()?))
+        })
+        .collect();
+    if wanted.is_empty() || key.is_empty() {
+        return 0;
+    }
+
+    let cf = |path: &str, body: serde_json::Value| {
+        client
+            .post(format!("https://api.curseforge.com/v1{path}"))
+            .header("x-api-key", key)
+            .json(&body)
+            .send()
+    };
+
+    let file_ids: Vec<u64> = wanted.iter().map(|(_, _, id)| *id).collect();
+    let Ok(response) = cf("/mods/files", serde_json::json!({ "fileIds": file_ids })).await else {
+        return 0;
+    };
+    let Ok(listed) = response.json::<serde_json::Value>().await else {
+        return 0;
+    };
+    let Some(files) = listed.get("data").and_then(|d| d.as_array()) else {
+        return 0;
+    };
+
+    // The category lives on the project, not on the file, and it decides the folder.
+    let project_ids: Vec<u64> = wanted.iter().map(|(_, project, _)| *project).collect();
+    let mut class_of: std::collections::HashMap<u64, u64> = std::collections::HashMap::new();
+    if let Ok(response) = cf("/mods", serde_json::json!({ "modIds": project_ids })).await {
+        if let Ok(projects) = response.json::<serde_json::Value>().await {
+            for project in projects
+                .get("data")
+                .and_then(|d| d.as_array())
+                .unwrap_or(&Vec::new())
+            {
+                let (Some(id), Some(class)) = (
+                    project.get("id").and_then(serde_json::Value::as_u64),
+                    project.get("classId").and_then(serde_json::Value::as_u64),
+                ) else {
+                    continue;
+                };
+                class_of.insert(id, class);
+            }
+        }
+    }
+
+    let mut by_file_id: std::collections::HashMap<u64, &serde_json::Value> =
+        std::collections::HashMap::new();
+    for file in files {
+        if let Some(id) = file.get("id").and_then(serde_json::Value::as_u64) {
+            by_file_id.insert(id, file);
+        }
+    }
+
+    let mut resolved = 0usize;
+    let mut blocked = Vec::new();
+    for (index, project, file_id) in wanted {
+        let Some(entry) = by_file_id.get(&file_id) else {
+            continue;
+        };
+        let Some(name) = entry.get("fileName").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        // A name out of somebody else's manifest becomes a path here, so it may only be a name.
+        if !crate::sync::plain_name(name) {
+            continue;
+        }
+        let folder = folder(class_of.get(&project).copied().unwrap_or(6));
+
+        // downloadUrl is null exactly when the author opted out of third-party distribution.
+        let Some(url) = entry
+            .get("downloadUrl")
+            .and_then(|v| v.as_str())
+            .filter(|url| !url.is_empty())
+        else {
+            blocked.push(name.to_string());
+            continue;
+        };
+
+        pack.files[index].path = format!("{folder}/{name}");
+        pack.files[index].url = Some(url.to_string());
+        pack.files[index].sha1 =
+            entry
+                .get("hashes")
+                .and_then(|h| h.as_array())
+                .and_then(|hashes| {
+                    hashes
+                        .iter()
+                        .find(|hash| {
+                            hash.get("algo").and_then(serde_json::Value::as_u64) == Some(1)
+                        })?
+                        .get("value")?
+                        .as_str()
+                        .map(str::to_string)
+                });
+        resolved += 1;
+    }
+
+    // Dropped rather than left as a placeholder: an unresolved entry would be written as a
+    // file called "cf:", and the blocked list is what tells the admin to fetch it by hand.
+    pack.files.retain(|file| !file.path.starts_with("cf://"));
+    pack.blocked.extend(blocked);
+    resolved
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

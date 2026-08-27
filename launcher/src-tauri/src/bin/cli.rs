@@ -1,14 +1,12 @@
 //! The server-side companion: turn a modpack into a server directory, and change a running
-//! server without SFTP. Shares the launcher's pack reader.
+//! server without SFTP. Shares the launcher's pack reader and its server builder - the
+//! launcher's own hosting tab writes the same directory through the same functions.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
-use launcher_lib::pack::{self, Side};
-// the same predicate the launcher writes manifest files through: a path out of somebody else's
-// archive has to stay inside the directory we are writing, on either side of the connection
-use launcher_lib::sync::plain_relative;
+use launcher_lib::{host, pack};
 
 #[derive(Parser)]
 #[command(
@@ -35,6 +33,15 @@ enum Command {
         /// Say you have read https://aka.ms/MinecraftEULA. Without it the server will not start.
         #[arg(long)]
         eula: bool,
+        /// The port the server listens on.
+        #[arg(long, default_value_t = 25565)]
+        port: u16,
+        /// Heap in MB. Sized from the pack when left out.
+        #[arg(long, default_value_t = 0)]
+        memory: u64,
+        /// Leave the publisher mod out: the server runs, but hands nothing to clients.
+        #[arg(long)]
+        no_publish: bool,
         /// CurseForge API key, needed to resolve a CurseForge manifest.
         #[arg(long, env = "UNIFIEDMC_CF_KEY", hide_env_values = true)]
         cf_key: Option<String>,
@@ -87,14 +94,33 @@ enum Command {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // The library reports a few failures as keys, because the launcher translates them. A
+    // terminal cannot, so the handful it can actually hit are spelled out here.
+    run()
+        .await
+        .map_err(|error| match format!("{error:#}").as_str() {
+            "error.noJava" => anyhow!(
+                "no Java found. A Minecraft server needs a JDK 21 (17 below 1.20.5, 8 below 1.17)."
+            ),
+            "error.curseforgeKeyNeeded" => anyhow!(
+                "this CurseForge pack names its files by id. Pass --cf-key to resolve them."
+            ),
+            _ => error,
+        })
+}
+
+async fn run() -> Result<()> {
     match Cli::parse().command {
         Command::Init {
             pack,
             out,
             dry_run,
             eula,
+            port,
+            memory,
+            no_publish,
             cf_key,
-        } => init(&pack, out, dry_run, eula, cf_key).await,
+        } => init(&pack, out, dry_run, eula, port, memory, !no_publish, cf_key).await,
         Command::Token => {
             println!("{}", new_token());
             eprintln!("\nPut this in config/unifiedmc.properties as:");
@@ -132,6 +158,36 @@ async fn main() -> Result<()> {
     }
 }
 
+/// The library reports progress as a key and a detail so the launcher can translate it. This
+/// is a terminal, so it gets English.
+fn say(phase: &str, detail: String, done: u64, total: u64) {
+    let what = match phase {
+        "host.read" => "read",
+        "host.resolved" => "resolved from CurseForge",
+        "host.clientOnly" => "turned out to be client-only; Modrinth says so, the pack did not",
+        "host.wrote" => "files written",
+        "host.files" => {
+            // One line per file would be a wall; every tenth is a progress bar you can read.
+            if done.is_multiple_of(10) || done == total {
+                println!("  {done}/{total} {detail}");
+            }
+            return;
+        }
+        "host.publisher" => "the publisher mod, into mods/",
+        "host.publisherFailed" => "could not fetch the publisher mod",
+        "host.loader" => "loader",
+        "host.installer" => "running the installer",
+        "host.blocked" => "refuse third-party distribution - download those by hand into mods/",
+        "host.failed" => "could not be fetched; get those by hand before starting the server",
+        other => other,
+    };
+    if detail.is_empty() {
+        println!("  {what}");
+    } else {
+        println!("  {detail} {what}");
+    }
+}
+
 /// 32 bytes from the operating system, hex encoded. Not std's RandomState: that is a hash seed.
 fn new_token() -> String {
     let mut bytes = [0u8; 32];
@@ -139,202 +195,91 @@ fn new_token() -> String {
     hex::encode(bytes)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn init(
     path: &Path,
     out: Option<PathBuf>,
     dry_run: bool,
     accept_eula: bool,
+    port: u16,
+    memory: u64,
+    publish: bool,
     cf_key: Option<String>,
 ) -> Result<()> {
-    let pack = pack::read(path)?;
-    println!("{} {}", pack.name, pack.version);
-    println!("  minecraft {}", pack.minecraft);
-    if let Some((loader, version)) = &pack.loader {
+    // Read once here for the summary and the default directory name; host::build reads it
+    // again to do the work, which is a zip open against saying the same thing in two places.
+    let summary = pack::read(path)?;
+    println!("{} {}", summary.name, summary.version);
+    println!("  minecraft {}", summary.minecraft);
+    if let Some((loader, version)) = &summary.loader {
         println!("  {loader} {version}");
     }
+    for (area, count) in summary.counts() {
+        println!("  {count} {area}");
+    }
 
-    let unresolved = pack
+    let unresolved = summary
         .files
         .iter()
         .filter(|f| f.path.starts_with("cf://"))
         .count();
-    if unresolved > 0 && cf_key.is_none() {
+    if unresolved > 0 && cf_key.as_deref().unwrap_or_default().is_empty() {
         return Err(anyhow!(
             "{unresolved} files are CurseForge ids and need --cf-key to resolve"
         ));
     }
-
-    for (area, count) in pack.counts() {
-        println!("  {count} {area}");
-    }
-    if !pack.blocked.is_empty() {
-        println!(
-            "\n  {} refuse third-party distribution:",
-            pack.blocked.len()
-        );
-        for name in &pack.blocked {
-            println!("    {name}");
-        }
-        println!("  Download those by hand and drop them in mods/.");
-    }
-
-    let root = out.unwrap_or_else(|| PathBuf::from(sanitise(&pack.name)));
+    let root = out.unwrap_or_else(|| PathBuf::from(host::sanitise(&summary.name)));
     if dry_run {
         println!("\nWould write to {}", root.display());
         return Ok(());
     }
+    if root
+        .read_dir()
+        .is_ok_and(|mut entries| entries.next().is_some())
+    {
+        return Err(anyhow!("{} exists and is not empty", root.display()));
+    }
+    std::fs::create_dir_all(&root)?;
 
     let client = reqwest::Client::builder()
         .user_agent(concat!("UnifiedMC/", env!("CARGO_PKG_VERSION")))
         .build()?;
 
-    // Before anything is written: a pack that leaves a mod's sides undeclared would otherwise
-    // put a client-only jar in mods/, and a dedicated server dies on the first client class it
-    // touches. Modrinth is asked once, in bulk, and a failure here changes nothing.
-    let mut pack = pack;
-    let moved = pack::resolve_unknown_sides(&client, &mut pack).await;
-    if moved > 0 {
-        println!("  {moved} more turned out to be client-only; Modrinth says so, the pack did not");
+    println!("\nSetting the server up:");
+    let server = host::build(
+        &client,
+        &root,
+        &host::Spec {
+            name: summary.name.clone(),
+            minecraft: String::new(),
+            loader: None,
+            loader_version: None,
+            port,
+            memory,
+            eula: accept_eula,
+            publish,
+            pack: Some(path.to_path_buf()),
+            // --cf-key beats whatever was compiled in, so a build without the secret can
+            // still import a CurseForge manifest.
+            cf_key: cf_key
+                .filter(|key| !key.is_empty())
+                .unwrap_or_else(|| launcher_lib::settings::curseforge_key().to_string()),
+        },
+        &say,
+    )
+    .await?;
+
+    println!("\n{} is ready.", root.display());
+    println!("  {} MB heap, port {}", server.memory, server.port);
+    if !server.publishes {
+        println!("  no publisher mod: nothing is handed to clients");
     }
-
-    let mut written = 0usize;
-    let mut failed: Vec<(String, String)> = Vec::new();
-
-    for file in &pack.files {
-        // A pack is a zip somebody else wrote, and every member name is attacker text.
-        if !plain_relative(&file.path) {
-            println!("  skipping {} - not a path inside the pack", file.path);
-            continue;
-        }
-
-        // config for the server, mods split by which side loads them
-        let target = root.join(place(&file.path, file.side));
-
-        if pack::is_private(&file.path) {
-            continue; // backups and per-world state are nobody else's business
-        }
-
-        std::fs::create_dir_all(
-            target
-                .parent()
-                .ok_or_else(|| anyhow!("odd path: {}", file.path))?,
-        )?;
-
-        if let Some(bytes) = &file.bytes {
-            std::fs::write(&target, bytes)?;
-        } else if let Some(url) = &file.url {
-            // One dead link must not end a two hundred file import. Collect and report at the
-            // end, so the admin sees the whole list rather than one at a time.
-            match fetch(&client, url).await {
-                Ok(bytes) => match verify(&bytes, file.sha1.as_deref()) {
-                    // The pack states a hash for a reason: a repointed link would otherwise become a jar in
-                    // mods/, and from there a jar in every player's.
-                    Ok(()) => std::fs::write(&target, &bytes)?,
-                    Err(error) => {
-                        failed.push((file.path.clone(), format!("{error}")));
-                        continue;
-                    }
-                },
-                Err(error) => {
-                    failed.push((file.path.clone(), format!("{error}")));
-                    continue;
-                }
-            }
-        } else {
-            continue;
-        }
-        written += 1;
-        if written.is_multiple_of(25) {
-            println!("  {written} files");
-        }
+    if !accept_eula {
+        println!("  Read https://aka.ms/MinecraftEULA, then set eula=true in eula.txt");
+        println!("  (or run this again with --eula, which says you have read it)");
     }
-
-    write_config(&root, &pack)?;
-    println!("\nWrote {written} files to {}", root.display());
-
-    if !failed.is_empty() {
-        println!("\n{} could not be fetched:", failed.len());
-        for (path, error) in &failed {
-            println!("  {path}\n    {error}");
-        }
-        println!("\nGet those by hand before starting the server; it will be missing them.");
-    }
-
-    provision(&client, &root, &pack, accept_eula).await?;
+    println!("  Start it with ./start.sh");
     Ok(())
-}
-
-fn verify(bytes: &[u8], expected: Option<&str>) -> Result<()> {
-    use sha1::{Digest, Sha1};
-    let Some(expected) = expected else {
-        return Ok(()); // a pack that states no hash cannot be held to one
-    };
-    let got = hex::encode(Sha1::digest(bytes));
-    if got.eq_ignore_ascii_case(expected) {
-        return Ok(());
-    }
-    Err(anyhow!("hash mismatch: expected {expected}, got {got}"))
-}
-
-async fn fetch(client: &reqwest::Client, url: &str) -> Result<bytes::Bytes> {
-    Ok(client
-        .get(url)
-        .send()
-        .await?
-        .error_for_status()?
-        .bytes()
-        .await?)
-}
-
-fn write_config(root: &Path, pack: &pack::Pack) -> Result<()> {
-    let (loader, version) = pack
-        .loader
-        .clone()
-        .unwrap_or_else(|| ("neoforge".into(), String::new()));
-
-    let config = format!(
-        "#UnifiedMC - what this server tells clients to install\n\
-         port=25566\n\
-         loader={loader}\n\
-         loader-version={version}\n\
-         minecraft={}\n\
-         \n\
-         # Remote control is off without a token. Generate one with:\n\
-         #   unifiedmc-server-cli token\n\
-         #admin-token=\n",
-        pack.minecraft
-    );
-    std::fs::create_dir_all(root.join("config"))?;
-    std::fs::write(root.join("config/unifiedmc.properties"), config)?;
-
-    std::fs::create_dir_all(root.join("unifiedmc/client"))?;
-    std::fs::create_dir_all(root.join("unifiedmc/client-config"))?;
-    std::fs::write(
-        root.join("unifiedmc/server-only.txt"),
-        "# One jar filename per line: mods this server loads but clients must NOT get.\n\
-         # Client-only mods do not belong here - those live in unifiedmc/client/.\n",
-    )?;
-    Ok(())
-}
-
-/// A pack name becomes a directory name, so it stops being a path.
-fn sanitise(name: &str) -> String {
-    let cleaned: String = name
-        .chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '-'
-            }
-        })
-        .collect();
-    let trimmed = cleaned.trim_matches('-');
-    if trimmed.is_empty() {
-        "pack".into()
-    } else {
-        trimmed.to_lowercase()
-    }
 }
 
 async fn push(base: &str, jar: &Path, area: &str, token: &str) -> Result<()> {
@@ -426,347 +371,9 @@ async fn report(response: reqwest::Response) -> Result<()> {
     Err(anyhow!("{status}: {body}"))
 }
 
-/// Where a file out of a pack belongs on a server.
-///
-/// A pack is written for a client, so `resourcepacks/` and `shaderpacks/` mean nothing to a
-/// server and everything to the player. They go into the areas the publisher hands out, or a
-/// resource pack reaches players as a config file.
-fn place(path: &str, side: Side) -> PathBuf {
-    let under = |prefix: &str| path.strip_prefix(prefix).unwrap_or(path).to_string();
-
-    // Client-side by definition, whatever the pack says about sides: no server loads either.
-    if let Some(rest) = path.strip_prefix("resourcepacks/") {
-        return PathBuf::from("unifiedmc/client-resourcepacks").join(rest);
-    }
-    if let Some(rest) = path.strip_prefix("shaderpacks/") {
-        return PathBuf::from("unifiedmc/client-shaders").join(rest);
-    }
-    // A datapack is world data. The server's own live in the world directory and it applies
-    // them itself; one a pack marks client-only is for the player's own copy of the world.
-    for prefix in ["datapacks/", "world/datapacks/"] {
-        if let Some(rest) = path.strip_prefix(prefix) {
-            return match side {
-                Side::ClientOnly => PathBuf::from("unifiedmc/client-datapacks").join(rest),
-                _ => PathBuf::from("world/datapacks").join(rest),
-            };
-        }
-    }
-
-    match (side, path.starts_with("mods/")) {
-        (Side::ClientOnly, true) => PathBuf::from("unifiedmc/client").join(under("mods/")),
-        // client-config/ mirrors config/, so the prefix must not be repeated inside it
-        (Side::ClientOnly, false) => {
-            PathBuf::from("unifiedmc/client-config").join(under("config/"))
-        }
-        (_, _) => PathBuf::from(path),
-    }
-}
-
-/// What a directory of mods is not: a loader, a server jar, the two files Minecraft refuses to
-/// start without, and something to double-click.
-async fn provision(
-    client: &reqwest::Client,
-    root: &Path,
-    pack: &pack::Pack,
-    accept_eula: bool,
-) -> Result<()> {
-    println!("\nSetting the server up:");
-
-    let (loader, mut version) = pack
-        .loader
-        .clone()
-        .unwrap_or_else(|| ("neoforge".into(), String::new()));
-
-    // 1. The mod that makes this a UnifiedMC server. Only where it loads: Fabric answers a jar it
-    //    does not understand with "found 1 non-fabric mod" and carries on.
-    let publisher = matches!(loader.as_str(), "neoforge" | "fabric" | "quilt");
-    if publisher {
-        let mods = root.join("mods");
-        std::fs::create_dir_all(&mods)?;
-        match fetch(client, PUBLISHER_URL).await {
-            Ok(bytes) => {
-                std::fs::write(mods.join("unifiedmc-server.jar"), &bytes)?;
-                println!("  the publisher mod, into mods/");
-            }
-            // Not fatal: everything else here still produces a working server, only one that
-            // hands nothing to clients.
-            Err(error) => println!(
-                "  could not fetch the publisher mod: {error}\n    get it from {PUBLISHER_URL}"
-            ),
-        }
-    } else {
-        println!("  no publisher mod: there is no {loader} build of it yet");
-        println!("    the server will run; clients just cannot install from it yet");
-        println!("    https://github.com/EJTP/UnifiedMC-Server#platforms");
-    }
-
-    // 2. The loader's own server. Fabric hands out a launchable jar; NeoForge and Forge hand
-    //    out an installer that has to be run once, which needs a JVM on this machine.
-    if version.is_empty() {
-        if let Some(kind) = launcher_lib::loaders::Kind::parse(&loader) {
-            version = launcher_lib::loaders::latest(client, kind, &pack.minecraft)
-                .await
-                .unwrap_or_default();
-        }
-    }
-    // Sized like the launcher sizes a client: a pack this size does not fit in the JVM's
-    // default quarter of the machine, and a server that dies at 40 players is not a mystery.
-    let heap = 2048 + 12 * pack.files.len().min(500);
-    let start = install_loader(client, root, &loader, &version, &pack.minecraft, heap).await?;
-
-    // 3. Minecraft will not start without being told the licence was read, and that is the
-    //    admin's statement to make, not ours.
-    std::fs::write(
-        root.join("eula.txt"),
-        if accept_eula {
-            "# Accepted by whoever ran unifiedmc-server-cli init --eula\neula=true\n"
-        } else {
-            "eula=false\n"
-        },
-    )?;
-
-    // 4. A server.properties that matches the pack rather than the vanilla defaults.
-    let properties = root.join("server.properties");
-    if !properties.exists() {
-        std::fs::write(
-            &properties,
-            format!(
-                "motd={} {}\nserver-port=25565\nonline-mode=true\nmax-players=20\n\
-                 view-distance=10\nsimulation-distance=8\nlevel-name=world\nmotd-escaped=false\n",
-                pack.name, pack.version
-            ),
-        )?;
-        println!("  server.properties");
-    }
-
-    // 5. Something to run. The heap is already inside `start` - a JVM option after -jar is an
-    //    argument to the program, not to the JVM, so appending it here would set nothing.
-    std::fs::write(
-        root.join("start.sh"),
-        format!("#!/bin/sh\ncd \"$(dirname \"$0\")\"\nexec {start}\n"),
-    )?;
-    std::fs::write(
-        root.join("start.bat"),
-        format!("@echo off\r\ncd /d \"%~dp0\"\r\n{start}\r\npause\r\n"),
-    )?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(
-            root.join("start.sh"),
-            std::fs::Permissions::from_mode(0o755),
-        )?;
-    }
-    println!("  start.sh and start.bat, {heap} MB heap");
-
-    // Said here rather than discovered at the first start: a server directory is usually built
-    // on one machine and run on another, so this is a note, not a failure.
-    if std::process::Command::new("java")
-        .arg("-version")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_err()
-    {
-        println!("  no java on this machine - the server needs a JDK 21 wherever it runs");
-    }
-
-    println!("\n{} is ready.", root.display());
-    if !accept_eula {
-        println!("  Read https://aka.ms/MinecraftEULA, then set eula=true in eula.txt");
-        println!("  (or run this again with --eula, which says you have read it)");
-    }
-    println!("  Start it with ./start.sh");
-    Ok(())
-}
-
-/// Where the publisher mod is published. The launcher and the server mod version separately,
-/// so this follows whatever the server repository last released rather than our own number.
-const PUBLISHER_URL: &str =
-    "https://github.com/EJTP/UnifiedMC-Server/releases/latest/download/unifiedmc-server.jar";
-
-/// Returns the java command line that starts the server, without the heap flags.
-async fn install_loader(
-    client: &reqwest::Client,
-    root: &Path,
-    loader: &str,
-    version: &str,
-    minecraft: &str,
-    heap: usize,
-) -> Result<String> {
-    match loader {
-        "fabric" | "quilt" => {
-            let installer = fetch_json_field(
-                client,
-                "https://meta.fabricmc.net/v2/versions/installer",
-                "version",
-            )
-            .await
-            .unwrap_or_else(|| "1.0.1".into());
-            let url = format!(
-                "https://meta.fabricmc.net/v2/versions/loader/{minecraft}/{version}/{installer}/server/jar"
-            );
-            let bytes = fetch(client, &url)
-                .await
-                .with_context(|| format!("fetching the {loader} server from {url}"))?;
-            std::fs::write(root.join("server.jar"), &bytes)?;
-            println!("  {loader} {version} server jar");
-            Ok(format!(
-                "java -Xmx{heap}M -Xms{heap}M -jar server.jar nogui"
-            ))
-        }
-        _ => {
-            let url = if loader == "forge" {
-                format!("https://maven.minecraftforge.net/net/minecraftforge/forge/{version}/forge-{version}-installer.jar")
-            } else {
-                format!("https://maven.neoforged.net/releases/net/neoforged/neoforge/{version}/neoforge-{version}-installer.jar")
-            };
-            let bytes = fetch(client, &url)
-                .await
-                .with_context(|| format!("fetching the {loader} installer from {url}"))?;
-            let installer = root.join("installer.jar");
-            std::fs::write(&installer, &bytes)?;
-            println!("  {loader} {version} installer");
-
-            // The installer needs a JVM here. Without one it stays in place with the command to run.
-            match std::process::Command::new("java")
-                .arg("-jar")
-                .arg("installer.jar")
-                .arg("--install-server")
-                .arg(".")
-                .current_dir(root)
-                .status()
-            {
-                Ok(status) if status.success() => {
-                    std::fs::write(
-                        root.join("user_jvm_args.txt"),
-                        format!(
-                            "# Read by run.sh. One option per line.\n-Xmx{heap}M\n-Xms{heap}M\n"
-                        ),
-                    )?;
-                    let _ = std::fs::remove_file(&installer);
-                    let _ = std::fs::remove_file(root.join("installer.jar.log"));
-                    println!("  installed it");
-                    Ok("sh run.sh nogui".into())
-                }
-                Ok(status) => {
-                    println!("  the installer exited with {status}; run it yourself:");
-                    println!(
-                        "    cd {} && java -jar installer.jar --install-server .",
-                        root.display()
-                    );
-                    Ok("sh run.sh nogui".into())
-                }
-                Err(_) => {
-                    println!("  no java here, so run this on the server before starting it:");
-                    println!("    java -jar installer.jar --install-server .");
-                    Ok("sh run.sh nogui".into())
-                }
-            }
-        }
-    }
-}
-
-async fn fetch_json_field(client: &reqwest::Client, url: &str, field: &str) -> Option<String> {
-    let list: serde_json::Value = client.get(url).send().await.ok()?.json().await.ok()?;
-    list.as_array()?
-        .iter()
-        .find(|entry| entry.get("stable").and_then(|s| s.as_bool()) == Some(true))
-        .or_else(|| list.as_array()?.first())?
-        .get(field)?
-        .as_str()
-        .map(str::to_string)
-}
-
 #[cfg(test)]
 mod tests {
-
-    #[test]
-    fn a_pack_is_sorted_into_the_areas_the_publisher_hands_out() {
-        let at = |path: &str, side| {
-            super::place(path, side)
-                .to_string_lossy()
-                .replace('\\', "/")
-        };
-
-        // The regression: a resource pack used to land in the config area, which delivered it
-        // to players as a config file - into config/resourcepacks/, where it does nothing.
-        assert_eq!(
-            at("resourcepacks/Fresh.zip", Side::ClientOnly),
-            "unifiedmc/client-resourcepacks/Fresh.zip"
-        );
-        assert_eq!(
-            at("shaderpacks/BSL.zip", Side::Both),
-            "unifiedmc/client-shaders/BSL.zip",
-            "no server loads a shader, whatever the pack says about sides"
-        );
-
-        // World data: the server's own stay where it applies them, a client-only one is for
-        // the player's own copy of the world.
-        assert_eq!(
-            at("datapacks/vanilla-tweaks.zip", Side::Both),
-            "world/datapacks/vanilla-tweaks.zip"
-        );
-        assert_eq!(
-            at("world/datapacks/extra.zip", Side::ClientOnly),
-            "unifiedmc/client-datapacks/extra.zip"
-        );
-
-        // And what was already right stays right.
-        assert_eq!(
-            at("mods/sodium.jar", Side::ClientOnly),
-            "unifiedmc/client/sodium.jar"
-        );
-        assert_eq!(at("mods/create.jar", Side::Both), "mods/create.jar");
-        assert_eq!(
-            at("config/sodium.json", Side::ClientOnly),
-            "unifiedmc/client-config/sodium.json"
-        );
-        assert_eq!(at("config/create.toml", Side::Both), "config/create.toml");
-        // the prefix is stripped once, not repeatedly
-        assert_eq!(
-            at("mods/mods/odd.jar", Side::ClientOnly),
-            "unifiedmc/client/mods/odd.jar"
-        );
-    }
     use super::*;
-
-    #[test]
-    fn a_pack_name_becomes_a_directory_name_not_a_path() {
-        assert_eq!(
-            sanitise("All of Create Aeronautics"),
-            "all-of-create-aeronautics"
-        );
-        assert_eq!(sanitise("../../etc"), "etc");
-        assert_eq!(sanitise("///"), "pack");
-    }
-
-    #[test]
-    fn a_pack_member_cannot_write_outside_the_directory_we_make() {
-        assert!(plain_relative("mods/sodium.jar"));
-        assert!(plain_relative("config/create/common.toml"));
-        for hostile in [
-            "../../../../.ssh/authorized_keys",
-            "/etc/cron.d/x",
-            "mods/../../../x",
-            "..",
-            "",
-        ] {
-            assert!(!plain_relative(hostile), "accepted {hostile:?}");
-        }
-    }
-
-    #[test]
-    fn a_pack_states_a_hash_so_that_it_gets_checked() {
-        // sha1 of "jar bytes"
-        let bytes = b"jar bytes";
-        use sha1::{Digest, Sha1};
-        let real = hex::encode(Sha1::digest(bytes));
-        assert!(verify(bytes, Some(&real)).is_ok());
-        assert!(verify(bytes, Some(&real.to_uppercase())).is_ok());
-        assert!(verify(bytes, None).is_ok(), "no hash is not a failure");
-        assert!(verify(bytes, Some("da39a3ee5e6b4b0d3255bfef95601890afd80709")).is_err());
-    }
 
     #[test]
     fn tokens_are_long_and_not_repeated() {

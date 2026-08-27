@@ -9,6 +9,7 @@
 	import { call } from "$lib/bridge";
 	import { launcher } from "$lib/state.svelte";
 	import { t, LOCALES } from "$lib/i18n.svelte";
+	import { ACCENTS, applyAccent } from "$lib/theme";
 	import type { Settings } from "$lib/types";
 
 	let { open = $bindable(false) }: { open: boolean } = $props();
@@ -24,6 +25,15 @@
 	/** The size the slider stands on, kept while Auto is on so switching back returns to it. */
 	let heap = $state(4096);
 	let tab = $state("general");
+
+	/**
+	 * The accent follows the swatch straight away rather than waiting for save: it repaints
+	 * the whole window, and picking a colour you cannot see until you commit to it is not
+	 * picking a colour. Cancelling puts the saved one back.
+	 */
+	$effect(() => {
+		applyAccent(open ? draft.accent : launcher.settings.accent);
+	});
 
 	$effect(() => {
 		if (!open) return;
@@ -150,6 +160,32 @@
 					</label>
 					<Input id="settings-offline-name" bind:value={draft.offline_name} />
 					<p class="text-xs text-muted-foreground">{t("settings.offlineNameHint")}</p>
+				</div>
+
+				<div class="space-y-2">
+					<span class="block text-sm font-medium">{t("accent.title")}</span>
+					<!--
+						Swatches, not a dropdown: this is the one setting whose whole point is what
+						it looks like, and a list of colour names would be a worse way to say it.
+					-->
+					<div class="flex flex-wrap gap-2" role="radiogroup" aria-label={t("accent.title")}>
+						{#each ACCENTS as accent (accent.id)}
+							{@const picked = draft.accent === accent.id}
+							<button
+								type="button"
+								role="radio"
+								aria-checked={picked}
+								aria-label={t(accent.key)}
+								title={t(accent.key)}
+								onclick={() => (draft.accent = accent.id)}
+								class="relative size-8 rounded-full outline-none transition-transform
+								       hover:scale-110 focus-visible:ring-3 focus-visible:ring-ring/50
+								       {picked ? 'ring-2 ring-foreground/80 ring-offset-2 ring-offset-popover' : ''}"
+								style="background: linear-gradient(135deg, {accent.primary} 0 50%, {accent.cta} 50% 100%)"
+							></button>
+						{/each}
+					</div>
+					<p class="text-xs text-muted-foreground">{t("accent.hint")}</p>
 				</div>
 
 				<div class="flex items-start justify-between gap-4">

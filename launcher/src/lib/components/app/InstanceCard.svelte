@@ -1,8 +1,9 @@
 <script lang="ts">
-	import { Boxes, Gamepad2, Loader2, Package, Play, Trash2 } from "@lucide/svelte";
+	import { Boxes, Clock, Gamepad2, Loader2, Package, Play, Trash2 } from "@lucide/svelte";
 	import { Button } from "$lib/components/ui/button";
 	import { launcher } from "$lib/state.svelte";
 	import { t } from "$lib/i18n.svelte";
+	import { ago, spell } from "$lib/played";
 	import type { Instance } from "$lib/types";
 
 	let {
@@ -19,10 +20,15 @@
 		onremove: () => void;
 	} = $props();
 
-	const facts = $derived(
-		[instance.minecraft, instance.loader ?? t("instances.noMods"), instance.source]
-			.filter(Boolean)
-			.join("  ·  ")
+	const played = $derived(launcher.played(`instance:${instance.id}`));
+
+	/** Pills, matching a server row: the two lists are the same object at different distances. */
+	const chips = $derived(
+		[
+			{ text: instance.minecraft, strong: true },
+			{ text: instance.loader ?? t("instances.noMods"), strong: false },
+			...(instance.source ? [{ text: instance.source, strong: false }] : [])
+		]
 	);
 
 	/** No other row may start while one is starting; the overlay covers the list either way. */
@@ -33,20 +39,30 @@
 </script>
 
 <!-- Same box, icon and button geometry as ServerCard: the two lists read as one system. -->
-<article
-	class="group flex items-center gap-3.5 rounded-lg border border-border/70 bg-card px-4 py-3
-	       transition-colors duration-200 hover:border-border hover:bg-accent/40"
->
-	<!-- The width a server row spends on its state dot, so both lists start their icons at one x. -->
-	<span class="size-3 shrink-0" aria-hidden="true"></span>
+<article class="surface surface-hover group flex items-center gap-3.5 py-3 pr-4 pl-5">
+	<!-- The strip a server row carries its state on, kept neutral: an instance has no state. -->
+	<span aria-hidden="true" class="absolute inset-y-0 left-0 w-[3px] bg-border/60"></span>
 
-	<div class="flex size-11 shrink-0 items-center justify-center overflow-hidden bg-muted">
+	<div class="flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted/70">
 		<Boxes class="size-5 text-muted-foreground/50" />
 	</div>
 
 	<div class="min-w-0 flex-1">
-		<h3 class="truncate text-base font-medium" title={instance.name}>{instance.name}</h3>
-		<p class="mt-0.5 truncate text-xs text-muted-foreground" title={facts}>{facts}</p>
+		<h3 class="truncate text-base font-semibold" title={instance.name}>{instance.name}</h3>
+		<div class="mt-1 flex flex-wrap items-center gap-1">
+			{#each chips as chip, i (i)}
+				<span class="chip {chip.strong ? 'chip-strong' : ''}">{chip.text}</span>
+			{/each}
+
+			{#if played && played.seconds > 0}
+				<span class="flex shrink-0 items-center gap-1 text-[0.7rem] text-muted-foreground/70">
+					<Clock class="size-2.5" />
+					{spell(played.seconds)}
+					<span class="text-muted-foreground/40">·</span>
+					{ago(played.last)}
+				</span>
+			{/if}
+		</div>
 	</div>
 
 	<!--
@@ -83,7 +99,7 @@
 
 		<Button
 			size="lg"
-			class="min-w-28 bg-cta text-cta-foreground hover:bg-cta/90"
+			class="cta-glow bg-cta text-cta-foreground hover:bg-cta/90 min-w-28"
 			onclick={onplay}
 			disabled={busy || blocked || live}
 		>

@@ -1,7 +1,8 @@
 <script lang="ts">
-	import { Minus, Square, X } from "@lucide/svelte";
+	import { ArrowUpCircle, Minus, Square, X } from "@lucide/svelte";
 	import { inTauri } from "$lib/bridge";
 	import { t } from "$lib/i18n.svelte";
+	import { launcher } from "$lib/state.svelte";
 
 	/**
 	 * The window's own bar, because the system one is off. The API is loaded on demand: in a
@@ -32,6 +33,35 @@
 	</span>
 
 	<div class="flex-1"></div>
+
+	<!--
+		A newer release, said once and quietly. In the bar rather than over the list: an update
+		is never urgent enough to interrupt what somebody opened the launcher to do, and the
+		one place always on screen is the one place it cannot be missed either.
+	-->
+	{#if launcher.release && !launcher.updateDismissed}
+		<button
+			type="button"
+			onclick={() => launcher.openRelease()}
+			title={t("update.hint", { version: launcher.release.latest })}
+			class="mr-1 flex items-center gap-1.5 rounded-full bg-primary/15 px-2.5 py-1 text-xs
+			       text-foreground/90 outline-none transition-colors hover:bg-primary/25
+			       focus-visible:ring-3 focus-visible:ring-ring/50"
+		>
+			<ArrowUpCircle class="size-3.5 text-primary" />
+			{t("update.available", { version: launcher.release.latest })}
+		</button>
+		<button
+			type="button"
+			onclick={() => (launcher.updateDismissed = true)}
+			aria-label={t("update.dismiss")}
+			title={t("update.dismiss")}
+			class="mr-2 rounded text-muted-foreground/60 outline-none transition-colors
+			       hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+		>
+			<X class="size-3" />
+		</button>
+	{/if}
 
 	{#if inTauri}
 		<button

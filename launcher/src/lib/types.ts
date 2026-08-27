@@ -64,6 +64,8 @@ export interface Settings {
 	keep_open: boolean;
 	jvm_profile: string;
 	jvm_args: string;
+	/** Which accent the window is painted in. See `theme.ts` for the names. */
+	accent: string;
 }
 
 export interface Session {
@@ -99,6 +101,58 @@ export interface MotdSpan {
 	underlined?: boolean;
 	strikethrough?: boolean;
 	obfuscated?: boolean;
+}
+
+/**
+ * A server running on this machine. The record as it was written down, plus what it is doing
+ * right now - the two arrive together because a row needs both to draw one line.
+ */
+export interface HostedServer {
+	id: string;
+	name: string;
+	minecraft: string;
+	loader: string | null;
+	loader_version: string | null;
+	port: number;
+	memory: number;
+	/** The pack it was built from, when it was built from one. */
+	source: string | null;
+	command: string[];
+	eula: boolean;
+	/** Whether the publisher mod is in place: whether a player with no mods can just join. */
+	publishes: boolean;
+	running: boolean;
+	players: string[];
+	/** What to type into Minecraft's own server list on this machine. */
+	address: string;
+	directory: string;
+}
+
+/** One line a hosted server printed, and which server printed it. */
+export interface ConsoleLine {
+	id: string;
+	line: string;
+}
+
+/**
+ * How much one server or instance has been played. Days are whole days since the epoch, so
+ * a bucket becomes a date with one multiplication and needs no date library either side.
+ */
+export interface Played {
+	seconds: number;
+	/** Unix seconds of the last session's end. 0 for something never finished. */
+	last: number;
+	sessions: number;
+	days: Record<number, number>;
+}
+
+/** A release on GitHub that is newer than this build. */
+export interface Release {
+	current: string;
+	latest: string;
+	url: string;
+	notes: string;
+	download: string | null;
 }
 
 /** What the player has to do while the sign-in waits for them. */

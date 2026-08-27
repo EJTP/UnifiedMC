@@ -67,3 +67,76 @@ jobs:
           test -n "$files" || { echo "nothing was bundled"; exit 1; }
           echo "$files"
           gh release upload "$tag" $files --clobber
+
+  macos:
+    name: macOS
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      # Both architectures, because what ships is a universal bundle: an Intel Mac and an
+      # Apple Silicon one download the same file and neither has to work out which it is.
+      # That is the same promise the launcher makes about Minecraft versions.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: launcher/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+        working-directory: launcher
+
+      - run: pnpm tauri build --target universal-apple-darwin
+        working-directory: launcher
+        env:
+          UNIFIEDMC_CF_KEY: ${{ secrets.UNIFIEDMC_CF_KEY }}
+          # Empty until there is a Developer ID to point them at, and Tauri skips signing when
+          # they are empty rather than failing. An unsigned .dmg still installs; Gatekeeper
+          # just makes the first open a two-step affair, which the README explains.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      # The CLI the same way round: built for both and merged, so the one file beside the app
+      # runs wherever the app does.
+      - name: Build the server CLI for both architectures
+        working-directory: launcher/src-tauri
+        env:
+          UNIFIEDMC_CF_KEY: ${{ secrets.UNIFIEDMC_CF_KEY }}
+        run: |
+          set -e
+          for arch in aarch64 x86_64; do
+            cargo build --release --bin unifiedmc-server-cli --target "$arch-apple-darwin"
+          done
+          lipo -create -output unifiedmc-server-cli-macos \
+            target/aarch64-apple-darwin/release/unifiedmc-server-cli \
+            target/x86_64-apple-darwin/release/unifiedmc-server-cli
+
+      - name: Attach the disk image to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          tag="${{ inputs.tag || github.ref_name }}"
+          # The .dmg alone. Tauri also leaves the .app next to it, but that is a directory,
+          # and a release asset has to be one file.
+          files=$(find launcher/src-tauri/target/universal-apple-darwin/release/bundle \
+            -type f -name '*.dmg')
+          cli=launcher/src-tauri/unifiedmc-server-cli-macos
+          test -f "$cli" && files="$files $cli"
+          test -n "$files" || { echo "nothing was bundled"; exit 1; }
+          echo "$files"
+          gh release upload "$tag" $files --clobber

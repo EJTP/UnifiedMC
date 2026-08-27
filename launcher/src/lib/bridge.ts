@@ -1,4 +1,4 @@
-import type { Progress, SignInPrompt } from "./types";
+import type { ConsoleLine, Progress, SignInPrompt } from "./types";
 
 /**
  * The Rust side, or nothing. Under `vite dev` there is no Tauri, so the bridge answers with
@@ -34,6 +34,55 @@ export async function onRunning(handler: () => void): Promise<() => void> {
 	return listen("unifiedmc://running", () => handler());
 }
 
+/** One line out of a hosted server's console, as it prints it. */
+export async function onConsole(handler: (line: ConsoleLine) => void): Promise<() => void> {
+	if (!inTauri) {
+		return () => {};
+	}
+	const { listen } = await import("@tauri-apps/api/event");
+	return listen<ConsoleLine>("unifiedmc://console", (event) => handler(event.payload));
+}
+
+/** A hosted server started or stopped. The list has to be read again; the event carries no
+ * payload, because "which one" is not enough to redraw a row that also has a player list. */
+export async function onHosts(handler: () => void): Promise<() => void> {
+	if (!inTauri) {
+		return () => {};
+	}
+	const { listen } = await import("@tauri-apps/api/event");
+	return listen("unifiedmc://hosts", () => handler());
+}
+
+/**
+ * The window was asked to close while servers were still up, and is waiting for them to save.
+ * There is no cancelling it: the alternative is a corrupt world.
+ */
+export async function onClosing(handler: () => void): Promise<() => void> {
+	if (!inTauri) {
+		return () => {};
+	}
+	const { listen } = await import("@tauri-apps/api/event");
+	return listen("unifiedmc://closing", () => handler());
+}
+
+/**
+ * The native file picker. A modpack is hundreds of megabytes, so what crosses the bridge is
+ * the path - a webview `<input type="file">` would hand over the bytes.
+ */
+export async function pickPack(title: string): Promise<string | null> {
+	if (!inTauri) {
+		return "/home/spieler/Downloads/All of Create 3.4.mrpack";
+	}
+	const { open } = await import("@tauri-apps/plugin-dialog");
+	const picked = await open({
+		title,
+		multiple: false,
+		directory: false,
+		filters: [{ name: "Modpack", extensions: ["mrpack", "zip"] }]
+	});
+	return typeof picked === "string" ? picked : null;
+}
+
 export async function onProgress(handler: (progress: Progress) => void): Promise<() => void> {
 	if (!inTauri) {
 		return () => {};
@@ -55,7 +104,7 @@ function sample(command: string, args: Record<string, unknown>): unknown {
 				],
 				settings: {
 					language: "system", memory: 0, offline_name: "Player",
-					keep_open: true, jvm_profile: "balanced", jvm_args: ""
+					keep_open: true, jvm_profile: "balanced", jvm_args: "", accent: "violet"
 				},
 				session: { name: "EJTP", uuid: "0", kind: "microsoft" },
 				unknown_server_icon: null
@@ -111,6 +160,8 @@ function sample(command: string, args: Record<string, unknown>): unknown {
 			// the pack server decides; an instance with no loader cannot run a mod at all
 			if (at.startsWith("194.54.88.19")) return ["mod", "resourcepack", "shader"];
 			if (at === "instance-c3") return ["resourcepack", "shader", "datapack"];
+			// A server the player runs owns its own world, so all four are theirs to add to.
+			if (at === "host-h2") return ["resourcepack", "shader", "datapack"];
 			return ["mod", "resourcepack", "shader", "datapack"];
 		}
 		case "mods": {
@@ -182,6 +233,37 @@ function sample(command: string, args: Record<string, unknown>): unknown {
 			if (loader === "quilt") return ["0.30.1-beta.3", "0.30.0"];
 			return [];
 		}
+		case "today":
+			return Math.floor(Date.now() / 86_400_000);
+		case "playtime": {
+			// Enough shape to look at the trend without a Rust build: one server played most
+			// evenings, one instance played once, and one row that has never been touched.
+			const today = Math.floor(Date.now() / 86_400_000);
+			const spread = (pattern: number[]) =>
+				Object.fromEntries(
+					pattern.map((hours, i) => [today - (pattern.length - 1 - i), Math.round(hours * 3600)])
+				);
+			return {
+				"server:194.54.88.19:25601": {
+					seconds: 184 * 3600,
+					last: Math.floor(Date.now() / 1000) - 3600 * 5,
+					sessions: 96,
+					days: spread([0, 1.5, 3.2, 0, 2.1, 4.8, 1.2, 0, 0.6, 2.9, 5.4, 3.1, 0, 2.2])
+				},
+				"server:play.example.net": {
+					seconds: 12 * 3600,
+					last: Math.floor(Date.now() / 1000) - 86_400 * 9,
+					sessions: 7,
+					days: spread([0, 0, 1.1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+				},
+				"instance:a1": {
+					seconds: 3 * 3600 + 1500,
+					last: Math.floor(Date.now() / 1000) - 86_400 * 2,
+					sessions: 3,
+					days: spread([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1.2, 0, 0])
+				}
+			};
+		}
 		case "machine_memory":
 			return 16384;
 		case "data_dir":
@@ -196,6 +278,55 @@ function sample(command: string, args: Record<string, unknown>): unknown {
 			];
 		case "save_settings":
 			return args.settings;
+		case "hosts":
+			return sampleHosts();
+		case "create_host":
+			return [
+				...sampleHosts(),
+				{
+					id: "new",
+					name: String(args.name || `Minecraft ${args.minecraft}`),
+					minecraft: String(args.minecraft ?? "1.21.8"),
+					loader: (args.loader as string | null) ?? null,
+					loader_version: null,
+					port: Number(args.port ?? 25565),
+					memory: Number(args.memory ?? 4096),
+					source: args.pack ? "All of Create 3.4" : null,
+					command: ["java", "-jar", "server.jar"],
+					eula: true,
+					publishes: Boolean(args.publish) && Boolean(args.loader),
+					running: false,
+					players: [],
+					address: `localhost:${args.port ?? 25565}`,
+					directory: `/home/spieler/.unifiedmc/hosted/new`
+				}
+			];
+		case "start_host":
+		case "stop_host":
+		case "kill_host":
+		case "host_command":
+		case "open_host_dir":
+		case "open_release":
+			return null;
+		case "remove_host":
+			return sampleHosts().filter((server) => server.id !== args.id);
+		case "host_console":
+			return [
+				"[12:00:01] [main/INFO]: Starting minecraft server version 1.21.1",
+				"[12:00:02] [main/INFO]: Loading properties",
+				"[12:00:09] [Server thread/INFO]: Preparing level \"world\"",
+				"[12:00:21] [Server thread/INFO]: Done (12.482s)! For help, type \"help\"",
+				"[12:03:44] [Server thread/INFO]: EJTP joined the game"
+			];
+		case "check_update":
+			// The banner is half the feature; without this it can never be looked at.
+			return {
+				current: "0.1.7",
+				latest: "0.1.8",
+				url: "https://github.com/EJTP/UnifiedMC/releases/tag/v0.1.8",
+				notes: "Local servers, and a launcher that says when it is out of date.",
+				download: null
+			};
 		case "versions":
 			return ["1.21.11", "1.21.10", "1.21.8", "1.21.1", "1.20.6", "1.20.1", "1.16.5", "1.8.9"];
 		case "player_head":
@@ -269,6 +400,46 @@ const catalogues: Record<string, SampleHit[]> = {
 		  downloads: 1_800_000, source: "modrinth", on_server: false, installed: false, icon: null }
 	]
 };
+
+function sampleHosts() {
+	return [
+		{
+			id: "h1",
+			name: "Create Aeronautics",
+			minecraft: "1.21.1",
+			loader: "neoforge",
+			loader_version: "21.1.247",
+			port: 25565,
+			memory: 6144,
+			source: "All of Create Aeronautics 3.4",
+			command: ["java", "-Xmx6144M", "@libraries/.../unix_args.txt", "nogui"],
+			eula: true,
+			publishes: true,
+			running: true,
+			players: ["EJTP", "Alex"],
+			address: "localhost:25565",
+			directory: "/home/spieler/.unifiedmc/hosted/h1"
+		},
+		// Vanilla, stopped, and publishing nothing: the other half of every state a row has.
+		{
+			id: "h2",
+			name: "Survival",
+			minecraft: "1.21.8",
+			loader: null,
+			loader_version: null,
+			port: 25575,
+			memory: 4096,
+			source: null,
+			command: ["java", "-Xmx4096M", "-jar", "server.jar", "nogui"],
+			eula: true,
+			publishes: false,
+			running: false,
+			players: [],
+			address: "localhost:25575",
+			directory: "/home/spieler/.unifiedmc/hosted/h2"
+		}
+	];
+}
 
 function sampleInstances() {
 	return [

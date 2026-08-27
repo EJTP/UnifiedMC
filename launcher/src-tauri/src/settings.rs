@@ -21,6 +21,9 @@ pub struct Settings {
     pub jvm_args: String,
     /// "system", "de" or "en". "system" follows the browser locale the webview reports.
     pub language: String,
+    /// Which accent the window is painted in. The names live in the frontend, which is the
+    /// only thing that has any use for them; this only has to remember the choice.
+    pub accent: String,
 }
 
 impl Default for Settings {
@@ -32,6 +35,7 @@ impl Default for Settings {
             jvm_profile: "balanced".into(),
             jvm_args: String::new(),
             language: "system".into(),
+            accent: "violet".into(),
         }
     }
 }

@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod catalogue;
+pub mod host;
 pub mod instances;
 pub mod loaders;
 pub mod modinfo;
@@ -8,16 +9,18 @@ pub mod options;
 pub mod pack;
 pub mod paths;
 pub mod play;
+pub mod playtime;
 pub mod servers;
 pub mod session;
 pub mod settings;
 pub mod skin;
 pub mod sync;
+pub mod update;
 
 use anyhow::Result;
 use base64::Engine;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use catalogue::Kind;
 use servers::{Manifest, SavedServer, ServerStatus};
@@ -43,8 +46,24 @@ fn allowed(manifest: &Manifest) -> Vec<Kind> {
         .collect()
 }
 
+/// What a running server's output is forwarded to: the window, as an event per line.
+struct Window(AppHandle);
+
+impl host::Watcher for Window {
+    fn line(&self, line: host::ConsoleLine) {
+        let _ = self.0.emit("unifiedmc://console", line);
+    }
+
+    fn changed(&self) {
+        let _ = self.0.emit("unifiedmc://hosts", ());
+    }
+}
+
 struct App {
     client: reqwest::Client,
+    /// The servers this launcher started. Owned here because the readers that follow their
+    /// console outlive the command that started them.
+    running: std::sync::Arc<host::Running>,
 }
 
 /// Tauri wants an error it can serialise; anyhow carries the context we actually want to show.
@@ -240,15 +259,18 @@ async fn play_instance(app: AppHandle, state: State<'_, App>, id: String) -> Res
         }
     }
 
-    play::run(
-        app,
-        state.client.clone(),
-        instances::key(instance),
-        // no address: the player picks a world, or a server, from Minecraft's own menu
-        None,
-        manifest,
-        settings,
-        session,
+    playtime::timed(
+        playtime::instance_key(&instance.id),
+        play::run(
+            app,
+            state.client.clone(),
+            instances::key(instance),
+            // no address: the player picks a world, or a server, from Minecraft's own menu
+            None,
+            manifest,
+            settings,
+            session,
+        ),
     )
     .await
     .map_err(failed)
@@ -363,9 +385,56 @@ fn instance_id(address: &str) -> Option<&str> {
     address.strip_prefix("instance-")
 }
 
+fn host_id(address: &str) -> Option<&str> {
+    address.strip_prefix("host-")
+}
+
+/// Neither of these is on the other side of a network, so the catalogue's client-side filter
+/// would only hide most of itself for no reason - and on a server the player runs, a
+/// server-side mod is the point rather than the thing to leave out.
+fn own_setup(address: &str) -> bool {
+    instance_id(address).is_some() || host_id(address).is_some()
+}
+
+/// Where the files a player adds for this address actually go.
+///
+/// A profile for anything reached over the network: the launcher copies those in beside what
+/// the server sent. A server hosted here loads its own directory, so there is no second copy
+/// to make and no profile to keep.
+fn content_dir(address: &str, key: &str, dir: &str) -> std::path::PathBuf {
+    match host_id(address) {
+        Some(id) => host::dir(id).join(dir),
+        None => paths::profiles().join(key).join(dir),
+    }
+}
+
+/// Every folder that counts as "installed here".
+///
+/// One, except for mods on a hosted server: those are split across what the server loads and
+/// what it only hands out, and a player who added Sodium wants to see it listed and be able to
+/// take it away again - not have it vanish because it landed on the other side.
+fn content_dirs(address: &str, key: &str, dir: &str) -> Vec<std::path::PathBuf> {
+    let mut folders = vec![content_dir(address, key, dir)];
+    if let Some(id) = host_id(address) {
+        if dir == "mods" {
+            folders.push(host::dir(id).join("unifiedmc/client"));
+        }
+    }
+    folders
+}
+
 async fn served(state: &State<'_, App>, address: &str) -> Result<(Manifest, String), String> {
     // An instance is not an address. "instance-<id>" resolved as a hostname is how this failed:
     // a DNS error about a profile on the local disk.
+    if let Some(id) = host_id(address) {
+        let server = host::find(id).ok_or_else(|| "error.serverGone".to_string())?;
+        let manifest = servers::manifest_for_choice(
+            server.minecraft.clone(),
+            server.loader.as_deref().and_then(loader_of),
+        );
+        return Ok((manifest, address.to_string()));
+    }
+
     if let Some(id) = instance_id(address) {
         let list = instances::load();
         let instance = list
@@ -547,14 +616,12 @@ async fn play(
 
         // the instance owns the directory and the personal mods in it; the server only says
         // where to connect
-        return play::run(
-            app,
-            client,
-            instances::key(chosen),
-            Some(address),
-            manifest,
-            settings,
-            session,
+        let key = instances::key(chosen);
+        // Filed under the server, not the instance the player brought: they pressed play on
+        // a server, and counting both would count the evening twice.
+        return playtime::timed(
+            playtime::server_key(&address),
+            play::run(app, client, key, Some(address), manifest, settings, session),
         )
         .await
         .map_err(failed);
@@ -581,9 +648,12 @@ async fn play(
     };
 
     let key = servers::instance_key(&address, &manifest);
-    play::run(app, client, key, Some(address), manifest, settings, session)
-        .await
-        .map_err(failed)
+    playtime::timed(
+        playtime::server_key(&address),
+        play::run(app, client, key, Some(address), manifest, settings, session),
+    )
+    .await
+    .map_err(failed)
 }
 
 /// What a player is allowed to add here, as the names the command surface uses. The browser
@@ -632,33 +702,27 @@ async fn mods(
                 hit
             })
             .collect()),
-        "installed" => Ok(sync::personal(
-            manifest.entries(dir),
-            &paths::profiles().join(&key).join(dir),
-        )
-        .into_iter()
-        .map(|file| hit_from_jar(&file, "profile", false, true))
-        .collect()),
+        "installed" => Ok(content_dirs(&address, &key, dir)
+            .iter()
+            .flat_map(|folder| sync::personal(manifest.entries(dir), folder))
+            .map(|file| hit_from_jar(&file, "profile", false, true))
+            .collect()),
         _ => {
             let catalogue = catalogue::Catalogue {
                 client: &client,
                 cf_key: settings::curseforge_key(),
             };
             let mut hits = catalogue
-                .search(
-                    &manifest,
-                    kind,
-                    &query,
-                    PAGE,
-                    offset,
-                    instance_id(&address).is_some(),
-                )
+                .search(&manifest, kind, &query, PAGE, offset, own_setup(&address))
                 .await
                 .map_err(failed)?;
 
             // Mark what the player already has. Mods only: a jar declares an id, a pack zip does not.
-            let mine = match dir {
-                "mods" => installed_ids(&paths::profiles().join(&key).join(dir)),
+            let mine: Vec<String> = match dir {
+                "mods" => content_dirs(&address, &key, dir)
+                    .iter()
+                    .flat_map(|folder| installed_ids(folder))
+                    .collect(),
                 _ => Vec::new(),
             };
             for hit in &mut hits {
@@ -699,14 +763,72 @@ async fn install_mods(
         .await
         .map_err(failed)?;
 
-    let profile = paths::profiles().join(&key).join(kind.dir());
+    let names: Vec<String> = resolved.iter().map(|entry| entry.name.clone()).collect();
+
     // add, not sync: reconciling the player's own folder against one answer would delete the
     // rest of what they installed
-    sync::add(&client, &resolved, &profile)
-        .await
-        .map_err(failed)?;
+    for (dir, entries) in sorted_by_side(&client, &address, kind, &manifest, resolved).await {
+        sync::add(&client, &entries, &content_dir(&address, &key, &dir))
+            .await
+            .map_err(failed)?;
+    }
 
-    Ok(resolved.into_iter().map(|entry| entry.name).collect())
+    Ok(names)
+}
+
+/// Which folder each pick belongs in, once.
+///
+/// Everywhere but a hosted server that is the folder the tab named. On a server the player
+/// runs, it is not: a client-only mod in `mods/` takes the start down on the first class it
+/// loads, so Modrinth is asked the same question the pack importer asks, and anything it calls
+/// client-only goes to the area the publisher hands to players instead.
+async fn sorted_by_side(
+    client: &reqwest::Client,
+    address: &str,
+    kind: Kind,
+    manifest: &Manifest,
+    resolved: Vec<servers::ModEntry>,
+) -> Vec<(String, Vec<servers::ModEntry>)> {
+    let here = kind.dir().to_string();
+    if host_id(address).is_none() || kind != Kind::Mod || resolved.is_empty() {
+        return vec![(here, resolved)];
+    }
+
+    let mut probe = pack::Pack {
+        name: String::new(),
+        version: String::new(),
+        minecraft: manifest.minecraft.clone(),
+        loader: None,
+        files: resolved
+            .iter()
+            .map(|entry| pack::PackFile {
+                path: format!("mods/{}", entry.name),
+                side: pack::Side::Both,
+                sha1: Some(entry.sha1.clone()),
+                url: None,
+                bytes: None,
+            })
+            .collect(),
+        blocked: Vec::new(),
+    };
+    // No network, no answer, and everything stays where the tab put it - which is the same
+    // guess the pack importer falls back to.
+    if pack::resolve_unknown_sides(client, &mut probe).await == 0 {
+        return vec![(here, resolved)];
+    }
+
+    let client_only: std::collections::HashSet<&str> = probe
+        .files
+        .iter()
+        .filter(|file| file.side == pack::Side::ClientOnly)
+        .filter_map(|file| file.path.strip_prefix("mods/"))
+        .collect();
+
+    let (mine, theirs): (Vec<_>, Vec<_>) = resolved
+        .into_iter()
+        .partition(|entry| client_only.contains(entry.name.as_str()));
+
+    vec![(here, theirs), ("unifiedmc/client".into(), mine)]
 }
 
 #[tauri::command]
@@ -717,17 +839,20 @@ async fn remove_mods(
     names: Vec<String>,
 ) -> Result<Vec<String>, String> {
     let (_, key) = served(&state, &address).await?;
-    let profile = paths::profiles().join(&key).join(kind.dir());
+    let folders = content_dirs(&address, &key, kind.dir());
 
     let mut gone = Vec::new();
     for name in names {
-        // only ever inside the player's own folder, and only by bare filename
+        // only ever inside those folders, and only by bare filename
         let Some(file) = std::path::Path::new(&name).file_name() else {
             continue;
         };
-        let target = profile.join(file);
-        if target.is_file() && std::fs::remove_file(&target).is_ok() {
-            gone.push(file.to_string_lossy().into_owned());
+        for folder in &folders {
+            let target = folder.join(file);
+            if target.is_file() && std::fs::remove_file(&target).is_ok() {
+                gone.push(file.to_string_lossy().into_owned());
+                break;
+            }
         }
     }
     Ok(gone)
@@ -819,19 +944,243 @@ fn save_settings(settings: Settings) -> Result<Settings, String> {
     Ok(settings)
 }
 
+/* ---------------------------------------------------------------- hosting. */
+
+/// A hosted server as the window draws it: what was written down, plus what it is doing now.
+#[derive(Serialize)]
+struct HostView {
+    #[serde(flatten)]
+    server: host::Hosted,
+    running: bool,
+    players: Vec<String>,
+    /// What to type into Minecraft's own "add server" box on this machine.
+    address: String,
+    /// Where its files are, for the button that opens the folder.
+    directory: String,
+}
+
+async fn host_views(running: &host::Running) -> Vec<HostView> {
+    let live = running.ids().await;
+    host::load()
+        .into_iter()
+        .map(|server| HostView {
+            running: live.contains(&server.id),
+            players: running.players(&server.id),
+            address: format!("localhost:{}", server.port),
+            directory: host::dir(&server.id).to_string_lossy().into_owned(),
+            server,
+        })
+        .collect()
+}
+
+#[tauri::command]
+async fn hosts(state: State<'_, App>) -> Result<Vec<HostView>, String> {
+    Ok(host_views(&state.running).await)
+}
+
+/// Build a server. Everything slow is in here, so it reports through the same overlay a
+/// launch does - a two hundred mod pack is a long download either way.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+async fn create_host(
+    app: AppHandle,
+    state: State<'_, App>,
+    name: String,
+    minecraft: String,
+    loader: Option<String>,
+    loader_version: Option<String>,
+    port: u16,
+    memory: u64,
+    eula: bool,
+    publish: bool,
+    pack: Option<String>,
+) -> Result<Vec<HostView>, String> {
+    // Said before anything is downloaded: a server directory that cannot legally start is a
+    // waste of the next four hundred megabytes.
+    if !eula {
+        return Err("error.eulaNotAccepted".into());
+    }
+    if port < 1024 {
+        return Err("error.portTooLow".into());
+    }
+    if host::load().iter().any(|server| server.port == port) {
+        return Err("error.portTaken".into());
+    }
+
+    let reporter = app.clone();
+    host::create(
+        &state.client,
+        host::Spec {
+            name,
+            minecraft,
+            loader,
+            loader_version,
+            port,
+            memory,
+            eula,
+            publish,
+            pack: pack.filter(|p| !p.is_empty()).map(std::path::PathBuf::from),
+            cf_key: settings::curseforge_key().to_string(),
+        },
+        &move |phase, detail, done, total| play::report(&reporter, phase, &detail, done, total),
+    )
+    .await
+    .map_err(failed)?;
+
+    Ok(host_views(&state.running).await)
+}
+
+#[tauri::command]
+async fn start_host(state: State<'_, App>, id: String) -> Result<(), String> {
+    let server = host::find(&id).ok_or_else(|| "error.serverGone".to_string())?;
+    state.running.start(&server).await.map_err(failed)
+}
+
+#[tauri::command]
+async fn stop_host(state: State<'_, App>, id: String) -> Result<(), String> {
+    state.running.stop(&id).await.map_err(failed)
+}
+
+/// For a server that ignored `stop`. Said out loud in the interface, because a killed server
+/// loses whatever it had not written to disk.
+#[tauri::command]
+async fn kill_host(state: State<'_, App>, id: String) -> Result<(), String> {
+    state.running.kill(&id).await.map_err(failed)
+}
+
+/// One line at the server's console, exactly as if it had been typed at a terminal.
+#[tauri::command]
+async fn host_command(state: State<'_, App>, id: String, line: String) -> Result<(), String> {
+    let line = line.trim();
+    if line.is_empty() {
+        return Ok(());
+    }
+    state.running.send(&id, line).await.map_err(failed)
+}
+
+/// What it has said so far. The console keeps it, so opening the drawer late still shows the
+/// start-up - which is exactly when something went wrong.
+#[tauri::command]
+fn host_console(state: State<'_, App>, id: String) -> Vec<String> {
+    state.running.console(&id)
+}
+
+/// Forget a server, and optionally delete what it wrote. Refused while it is running: the
+/// files are open, and Windows will not let go of them.
+#[tauri::command]
+async fn remove_host(
+    state: State<'_, App>,
+    id: String,
+    delete_files: bool,
+) -> Result<Vec<HostView>, String> {
+    if state.running.is_running(&id).await {
+        return Err("error.stopItFirst".into());
+    }
+    if delete_files {
+        let directory = host::dir(&id);
+        // Only ever inside the launcher's own hosted directory, whatever the id turned out
+        // to be: the id is generated, but it arrives here from the webview.
+        if directory.starts_with(host::root()) && directory != host::root() {
+            std::fs::remove_dir_all(&directory).map_err(|error| format!("{error}"))?;
+        }
+    }
+    let mut list = host::load();
+    list.retain(|server| server.id != id);
+    host::save(&list).map_err(failed)?;
+    Ok(host_views(&state.running).await)
+}
+
+/// The player's own file manager, on the server's directory. Where anyone goes to edit
+/// server.properties, drop in a world, or read the crash report.
+#[tauri::command]
+fn open_host_dir(app: AppHandle, id: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let directory = host::dir(&id);
+    if !directory.is_dir() {
+        return Err("error.serverGone".into());
+    }
+    app.opener()
+        .open_path(directory.to_string_lossy(), None::<&str>)
+        .map_err(|error| format!("{error}"))
+}
+
+/// Everything played, keyed the way `playtime` files it. Read whole: it is a few dozen
+/// entries, and the window wants all of them at once to sort a list by them.
+#[tauri::command]
+fn playtime() -> playtime::Book {
+    playtime::load()
+}
+
+/// Which day it is where the player is, so the trend can end on today rather than on
+/// whatever the last session happened to be.
+#[tauri::command]
+fn today() -> playtime::Day {
+    playtime::today()
+}
+
+/* ----------------------------------------------------------------- updates. */
+
+/// Whether GitHub has a newer release than this build. None when it has not, or when it could
+/// not be asked - neither is worth a message.
+#[tauri::command]
+async fn check_update(state: State<'_, App>) -> Result<Option<update::Release>, String> {
+    Ok(update::check(&state.client).await)
+}
+
+#[tauri::command]
+fn open_release(app: AppHandle, url: String) -> Result<(), String> {
+    // Only ever our own releases page: the url comes back through the webview, and "open this
+    // in the player's browser" is a capability worth keeping pointed somewhere.
+    if !url.starts_with("https://github.com/EJTP/UnifiedMC/") {
+        return Err("error.notOurRelease".into());
+    }
+    update::open(&app, &url).map_err(failed)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .manage(App {
-            client: reqwest::Client::builder()
-                .user_agent(concat!("UnifiedMC/", env!("CARGO_PKG_VERSION")))
-                // reqwest has no default timeout, and a launch has no cancel button. Generous enough for a
-                // 400 MB pack on a bad line.
-                .timeout(std::time::Duration::from_secs(300))
-                .connect_timeout(std::time::Duration::from_secs(10))
-                .build()
-                .expect("http client"),
+        .plugin(tauri_plugin_dialog::init())
+        // In setup rather than manage(): the console watcher needs a handle to emit through,
+        // and that only exists once the app has been built.
+        .setup(|app| {
+            app.manage(App {
+                client: reqwest::Client::builder()
+                    .user_agent(concat!("UnifiedMC/", env!("CARGO_PKG_VERSION")))
+                    // reqwest has no default timeout, and a launch has no cancel button.
+                    // Generous enough for a 400 MB pack on a bad line.
+                    .timeout(std::time::Duration::from_secs(300))
+                    .connect_timeout(std::time::Duration::from_secs(10))
+                    .build()
+                    .expect("http client"),
+                running: std::sync::Arc::new(host::Running::new(std::sync::Arc::new(Window(
+                    app.handle().clone(),
+                )))),
+            });
+            Ok(())
+        })
+        // A hosted server is a child of this process, and dropping the runtime kills it where
+        // it stands. Closing the window therefore asks each one to stop first and waits.
+        .on_window_event(|window, event| {
+            let tauri::WindowEvent::CloseRequested { api, .. } = event else {
+                return;
+            };
+            let running = window.state::<App>().running.clone();
+            // Nothing to wait for, so the window shuts the way it always did.
+            if !running.any() {
+                return;
+            }
+            api.prevent_close();
+
+            let window = window.clone();
+            tauri::async_runtime::spawn(async move {
+                // The window stays up while this runs, so it can say what it is waiting for.
+                let _ = window.emit("unifiedmc://closing", ());
+                running.stop_all(std::time::Duration::from_secs(25)).await;
+                // destroy, not close: close would come back through this handler and wait again
+                let _ = window.destroy();
+            });
         })
         .invoke_handler(tauri::generate_handler![
             bootstrap,
@@ -858,7 +1207,20 @@ pub fn run() {
             machine_memory,
             data_dir,
             jvm_preview,
-            save_settings
+            save_settings,
+            hosts,
+            create_host,
+            start_host,
+            stop_host,
+            kill_host,
+            host_command,
+            host_console,
+            remove_host,
+            open_host_dir,
+            check_update,
+            open_release,
+            playtime,
+            today
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -875,7 +1237,9 @@ mod tests {
             ..Default::default()
         };
         let names: Vec<&str> = allowed(&packed).iter().map(|k| k.as_str()).collect();
-        assert_eq!(names, vec!["mod", "resourcepack", "shader"]);
+        // No loader in this manifest, so no mod can load either - the pack rule and the
+        // loader rule both apply, and datapacks are the world's own.
+        assert_eq!(names, vec!["resourcepack", "shader"]);
         // the one install_mods actually asks
         assert!(!allowed(&packed).contains(&Kind::Datapack));
     }
@@ -889,8 +1253,18 @@ mod tests {
             .collect();
         assert_eq!(
             names,
-            vec!["mod", "resourcepack", "shader", "datapack"],
+            vec!["resourcepack", "shader", "datapack"],
             "the command surface and rule 4 disagree"
         );
+        // With a loader the fourth comes back: that is the half the filter is about.
+        let with_loader = Manifest {
+            loader: Some(servers::Loader {
+                kind: "fabric".into(),
+                version: None,
+            }),
+            ..Default::default()
+        };
+        let names: Vec<&str> = allowed(&with_loader).iter().map(|k| k.as_str()).collect();
+        assert_eq!(names, vec!["mod", "resourcepack", "shader", "datapack"]);
     }
 }
