@@ -120,19 +120,20 @@ jobs:
           cp target/universal-apple-darwin/release/unifiedmc-server-cli unifiedmc-server-cli-macos
           lipo -info unifiedmc-server-cli-macos
 
+      # No APPLE_* here on purpose. Tauri decides to sign by whether those variables are
+      # *set*, not by whether they hold anything, so wiring them up to secrets that do not
+      # exist yet hands it an empty certificate to import and takes the whole bundle down
+      # with it - which is exactly how v0.1.8 failed the first time.
+      #
+      # To sign, once there is a Developer ID: add APPLE_CERTIFICATE (base64 of the .p12),
+      # APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY, and for notarisation APPLE_ID,
+      # APPLE_PASSWORD and APPLE_TEAM_ID as an env block on this step. Until then the .dmg is
+      # unsigned, which installs fine - Gatekeeper just makes the first open a two-step
+      # affair, and the README says how.
       - run: pnpm tauri build --target universal-apple-darwin
         working-directory: launcher
         env:
           UNIFIEDMC_CF_KEY: ${{ secrets.UNIFIEDMC_CF_KEY }}
-          # Empty until there is a Developer ID to point them at, and Tauri skips signing when
-          # they are empty rather than failing. An unsigned .dmg still installs; Gatekeeper
-          # just makes the first open a two-step affair, which the README explains.
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
 
       - name: Attach the disk image to the release

@@ -154,10 +154,11 @@ first open needs right-click → Open rather than a double-click, or:
 xattr -dr com.apple.quarantine /Applications/UnifiedMC.app
 ```
 
-The release workflow already reads `APPLE_CERTIFICATE`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`,
-`APPLE_PASSWORD` and `APPLE_TEAM_ID` from repository secrets, and signs and notarises when
-they are set — so this stops being true the day a certificate exists, with no change to the
-workflow.
+To sign, add `APPLE_CERTIFICATE` (base64 of the `.p12`), `APPLE_CERTIFICATE_PASSWORD` and
+`APPLE_SIGNING_IDENTITY` as an `env:` block on the build step in `release.yml`, plus
+`APPLE_ID`, `APPLE_PASSWORD` and `APPLE_TEAM_ID` to notarise. They are deliberately not wired
+up in advance: Tauri decides to sign by whether those variables are *set*, not by whether they
+hold anything, so pointing them at secrets that do not exist yet fails the build outright.
 
 ## What is in here
 
