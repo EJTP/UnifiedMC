@@ -148,6 +148,23 @@
     color: var(--popover-foreground);
   }
 
+  /*
+    The browser's own spin buttons, off. They ignore the field's border radius, paint in the
+    platform's colours rather than the window's, and only appear on hover - so a form quietly
+    reflows under the cursor. `number-field.svelte` draws a stepper that does none of that.
+  */
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    appearance: none;
+    margin: 0;
+  }
+
+  input[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+
   ::-webkit-scrollbar {
     width: 10px;
     height: 10px;

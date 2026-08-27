@@ -3,7 +3,7 @@
 	import * as Dialog from "$lib/components/ui/dialog";
 	import * as Select from "$lib/components/ui/select";
 	import { Button } from "$lib/components/ui/button";
-	import { Input } from "$lib/components/ui/input";
+	import { Input, NumberField } from "$lib/components/ui/input";
 	import { Switch } from "$lib/components/ui/switch";
 	import { call } from "$lib/bridge";
 	import { launcher } from "$lib/state.svelte";
@@ -283,25 +283,16 @@
 				<div class="grid grid-cols-2 gap-3">
 					<div class="space-y-2">
 						<label for="host-port" class="block text-sm font-medium">{t("host.port")}</label>
-						<Input
-							id="host-port"
-							type="number"
-							min="1024"
-							max="65535"
-							bind:value={port}
-							class="font-mono"
-						/>
+						<NumberField id="host-port" bind:value={port} min={1024} max={65535} />
 					</div>
 					<div class="space-y-2">
 						<label for="host-memory" class="block text-sm font-medium">{t("host.memory")}</label>
-						<Input
+						<NumberField
 							id="host-memory"
-							type="number"
-							min="1024"
-							max={maxMemory}
-							step="512"
 							bind:value={memory}
-							class="font-mono"
+							min={1024}
+							max={maxMemory}
+							step={512}
 						/>
 					</div>
 				</div>
