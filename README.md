@@ -140,9 +140,12 @@ Tagging `v*` builds and attaches:
 |---|---|
 | Windows | an `.msi` and an NSIS `-setup.exe`, plus `unifiedmc-server-cli.exe` |
 | macOS | one universal `.dmg` — Intel and Apple Silicon download the same file — plus a universal `unifiedmc-server-cli-macos` |
+| Linux | an `.AppImage`, a `.deb` and an `.rpm`, plus `unifiedmc-server-cli-linux` |
 
-Linux is built from source for now; nothing about the launcher is Windows- or macOS-specific,
-there is just no bundling job for it yet.
+The Linux build is made on Ubuntu 22.04 rather than the newest runner: a binary links against
+the glibc it was built on and runs on that version or newer, never older, so building on the
+newest thing available is how a package comes out refusing to start on every distro a year
+behind it.
 
 **The macOS build is not signed.** There is no Apple Developer ID behind this project, so the
 first open needs right-click → Open rather than a double-click, or:
