@@ -56,7 +56,53 @@ pub fn hash_file(path: &Path) -> Result<String> {
 
 /// Fetch into the blob store, verified by hash. Catches a truncated download, not a
 /// substituted one: the hash arrives on the same unauthenticated channel as the bytes.
+/// How many times one file is worth trying.
+///
+/// A pack is hundreds of files pulled from one server over one connection. At any real failure
+/// rate a single attempt each means a launch that fails more often than it works - and it only
+/// takes one to take the whole thing down.
+const ATTEMPTS: usize = 4;
+
+/// Whether trying again could plausibly work.
+///
+/// A status the server actually gave us is its answer, not a hiccup: a 404 will be a 404 next
+/// time too. Everything else here - a connection that dropped, a body that ended before its
+/// stated length, a hash that therefore came out wrong - is exactly what a second attempt is
+/// for.
+fn worth_retrying(error: &anyhow::Error) -> bool {
+    match error
+        .downcast_ref::<reqwest::Error>()
+        .and_then(reqwest::Error::status)
+    {
+        Some(status) => {
+            status.is_server_error()
+                || status == reqwest::StatusCode::REQUEST_TIMEOUT
+                || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+        }
+        None => true,
+    }
+}
+
+/// Fetch one blob, trying again when the failure looks like a passing one.
 async fn download(client: &reqwest::Client, entry: &ModEntry) -> Result<()> {
+    let mut wait = std::time::Duration::from_millis(400);
+
+    for try_number in 1..=ATTEMPTS {
+        match fetch_once(client, entry).await {
+            Ok(()) => return Ok(()),
+            Err(error) if try_number < ATTEMPTS && worth_retrying(&error) => {
+                // Backing off rather than hammering: a server that just dropped a connection
+                // is often a server with too many open at once, and this runs several wide.
+                tokio::time::sleep(wait).await;
+                wait *= 2;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("the loop returns on its last attempt")
+}
+
+async fn fetch_once(client: &reqwest::Client, entry: &ModEntry) -> Result<()> {
     if entry.url.is_empty() {
         return Err(anyhow!("{}: not stored locally and no url", entry.name));
     }
@@ -319,6 +365,30 @@ pub fn personal(served: &[ModEntry], folder: &Path) -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+
+    /// The failure the player actually saw: a connection that ended before the body did.
+    #[test]
+    fn a_dropped_connection_is_worth_another_go_and_a_404_is_not() {
+        // Everything that is not the server's own answer: a reset, an early end of file, and
+        // the hash mismatch that a truncated body produces.
+        assert!(super::worth_retrying(&anyhow!(
+            "error reading a body from connection: end of file before message length reached"
+        )));
+        assert!(super::worth_retrying(&anyhow!("sodium.jar: hash mismatch")));
+
+        // A status is the server telling us something, and it will say it again.
+        let refused = reqwest::Client::new()
+            .get("http://0.0.0.0:1")
+            .build()
+            .err()
+            .map(anyhow::Error::from);
+        // A request that cannot even be built carries no status, so it retries - which is the
+        // right side to err on.
+        if let Some(error) = refused {
+            assert!(super::worth_retrying(&error));
+        }
+    }
+
     /// Windows reports all three of these as "Access is denied (os error 5)". The directory case
     /// fails on Linux too, so it is the one this can actually prove here.
     #[test]
