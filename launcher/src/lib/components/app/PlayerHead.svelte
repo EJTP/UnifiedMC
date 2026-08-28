@@ -13,10 +13,20 @@
 	let {
 		/** The whole 64x64 skin as a data url. Null while it is still being fetched. */
 		skin = null,
+		/**
+		 * The flat face, for when the whole skin could not be fetched. A cube needs six
+		 * squares; one 8x8 face is still a face, and showing it beats a grey box.
+		 */
+		fallback = null,
 		size = 48,
 		/** Whether the head follows the pointer. Off for a decorative one nobody will touch. */
 		interactive = true
-	}: { skin?: string | null; size?: number; interactive?: boolean } = $props();
+	}: {
+		skin?: string | null;
+		fallback?: string | null;
+		size?: number;
+		interactive?: boolean;
+	} = $props();
 
 	/**
 	 * Where each face lives in a 64x64 skin, as (x, y) of its top-left pixel.
@@ -120,6 +130,8 @@
 				</div>
 			{/each}
 		</div>
+	{:else if fallback}
+		<img src={fallback} alt="" class="size-full rounded-sm [image-rendering:pixelated]" />
 	{:else}
 		<!-- Same footprint while it loads, so the row it sits in does not jump when it arrives. -->
 		<div class="size-full rounded-sm bg-muted"></div>

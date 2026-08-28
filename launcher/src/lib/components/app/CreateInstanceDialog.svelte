@@ -104,7 +104,7 @@
 			<Dialog.Title>{t("instances.create.title")}</Dialog.Title>
 		</Dialog.Header>
 
-		<form onsubmit={create}>
+		<form id="create-instance" onsubmit={create}>
 			<div class="space-y-4 py-2">
 				<div class="space-y-2">
 					<label for="create-instance-name" class="block text-sm font-medium">
@@ -187,12 +187,19 @@
 				{/if}
 			</div>
 
+		</form>
+			<!--
+				Outside the form, linked back to it by id. Dialog.Footer bleeds to the dialog's
+				edges with a negative margin, which only lands right when it is a direct child
+				of the content box - inside the form it renders wider than its own parent and
+				pushes the dialog sideways.
+			-->
 			<Dialog.Footer>
 				<Button type="button" variant="ghost" onclick={() => (open = false)}>
 					{t("common.cancel")}
 				</Button>
-				<Button type="submit" disabled={!minecraft}>{t("common.create")}</Button>
+				<Button type="submit" form="create-instance" disabled={!minecraft}>{t("common.create")}</Button>
 			</Dialog.Footer>
-		</form>
+
 	</Dialog.Content>
 </Dialog.Root>

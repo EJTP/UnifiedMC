@@ -138,7 +138,7 @@
 			<Dialog.Description>{t("host.create.hint")}</Dialog.Description>
 		</Dialog.Header>
 
-		<form onsubmit={create}>
+		<form id="new-server" onsubmit={create}>
 			<div class="max-h-[58vh] space-y-4 overflow-y-auto py-2 pr-1">
 				<!--
 					The pack first, because it answers the two questions under it. A server built
@@ -310,6 +310,13 @@
 				{/if}
 			</div>
 
+		</form>
+			<!--
+				Outside the form, linked back to it by id. Dialog.Footer bleeds to the dialog's
+				edges with a negative margin, which only lands right when it is a direct child
+				of the content box - inside the form it renders wider than its own parent and
+				pushes the dialog sideways.
+			-->
 			<Dialog.Footer>
 				{#if !ready}
 					<span class="mr-auto self-center text-xs text-muted-foreground">
@@ -319,11 +326,11 @@
 				<Button type="button" variant="ghost" onclick={() => (open = false)}>
 					{t("common.cancel")}
 				</Button>
-				<Button type="submit" class="cta-glow bg-cta text-cta-foreground hover:bg-cta/90" disabled={!ready || launcher.busyHosting}>
+				<Button type="submit" form="new-server" class="cta-glow bg-cta text-cta-foreground hover:bg-cta/90" disabled={!ready || launcher.busyHosting}>
 					<Sparkles class="size-4" />
 					{t("host.build")}
 				</Button>
 			</Dialog.Footer>
-		</form>
+
 	</Dialog.Content>
 </Dialog.Root>

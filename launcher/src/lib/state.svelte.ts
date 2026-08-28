@@ -168,7 +168,11 @@ class LauncherState {
 
 		// both need the network, so neither may hold up the first paint
 		void call<string | null>("player_head").then((head) => (this.playerHead = head));
-		void call<string | null>("skin_texture").then((skin) => (this.skinTexture = skin));
+		// Caught, not swallowed by an unhandled rejection: without the whole skin the head
+		// falls back to the flat face, and knowing why is worth a line in the log.
+		void call<string | null>("skin_texture")
+			.then((skin) => (this.skinTexture = skin))
+			.catch((error) => console.error("skin_texture failed:", error));
 		void this.loadVersions();
 		// A hosted server that started or stopped is a row that has to change, and the process
 		// that did it is not the one this window asked.

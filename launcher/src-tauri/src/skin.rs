@@ -249,6 +249,44 @@ async fn mojang_said(answer: reqwest::Response) -> Result<()> {
 }
 
 #[cfg(test)]
+mod live {
+    /// Fetch a real profile's skin and check it comes back as a 64x64 png.
+    ///
+    /// Ignored by default because it talks to Mojang. Run it when the head will not draw:
+    ///
+    ///   cargo test --lib skin::live -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore = "talks to Mojang"]
+    async fn a_real_profile_gives_up_a_square_skin() {
+        let uuid = std::env::var("UNIFIEDMC_TEST_UUID")
+            .unwrap_or_else(|_| "4a9226f7-8f04-4a07-b35b-1578c54d2519".into());
+        let client = reqwest::Client::builder()
+            .user_agent("UnifiedMC-test")
+            .build()
+            .unwrap();
+
+        let texture = super::texture(&client, &uuid, true).await;
+        let Some(data) = texture else {
+            panic!("texture() returned None for {uuid}");
+        };
+        println!("  data url is {} chars", data.len());
+        assert!(
+            data.starts_with("data:image/png;base64,"),
+            "{}",
+            &data[..40.min(data.len())]
+        );
+
+        use base64::Engine;
+        let png = base64::engine::general_purpose::STANDARD
+            .decode(data.trim_start_matches("data:image/png;base64,"))
+            .expect("the payload is base64");
+        let image = image::load_from_memory(&png).expect("the payload is a png");
+        println!("  decoded {}x{}", image.width(), image.height());
+        assert_eq!((image.width(), image.height()), (64, 64));
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
