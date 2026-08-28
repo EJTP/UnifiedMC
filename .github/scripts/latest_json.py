@@ -23,7 +23,10 @@ WANTED = [
     # One universal bundle serves both Macs, so both keys point at the same file.
     ("darwin-x86_64", ".app.tar.gz"),
     ("darwin-aarch64", ".app.tar.gz"),
-    ("windows-x86_64", "-setup.nsis.zip"),
+    # Tauri 2 signs the NSIS installer itself and its updater installs that. There is no
+    # "-setup.nsis.zip" - that was Tauri 1's format, and asking for it is how v0.1.9 shipped
+    # a manifest with no Windows entry at all.
+    ("windows-x86_64", "-setup.exe"),
 ]
 
 
