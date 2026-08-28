@@ -130,9 +130,18 @@ not an evening.
 ## Updates and releases
 
 The launcher asks GitHub once at start whether the latest release tag is newer than its own
-version, and says so in the title bar. Pressing it opens the release, and offers the file for
-the machine it is running on. It does not replace the running binary — that needs signing keys
-and a per-platform manifest, and neither exists yet.
+version, and says so in the title bar. Pressing it offers the release notes and an **Update
+now** button that fetches the new version, writes it over this one, and restarts into it.
+
+Nothing is installed unsigned. Each platform's build signs its own updater artifact, a fourth
+job collects those signatures into the `latest.json` the launcher fetches, and the launcher
+verifies what it downloads against a public key compiled into the binary. A release signed with
+anything other than the matching private key is refused rather than installed.
+
+The private key lives in the `TAURI_SIGNING_PRIVATE_KEY` repository secret and nowhere else in
+this repository. **Losing it means never being able to ship a verified update again** — every
+installed copy trusts the one public key already built into it, so a new keypair only reaches
+people who reinstall by hand.
 
 Tagging `v*` builds and attaches:
 

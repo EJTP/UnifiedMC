@@ -7,6 +7,7 @@
 	import { spell } from "$lib/played";
 	import { launcher, type View } from "$lib/state.svelte";
 	import Sparkline from "./Sparkline.svelte";
+	import PlayerHead from "./PlayerHead.svelte";
 	import { cn } from "$lib/utils";
 
 	let { onsettings }: { onsettings: () => void } = $props();
@@ -157,16 +158,7 @@
 				class="-mx-1 flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-1 py-0.5 text-left
 				       outline-none transition-colors hover:bg-accent/40 focus-visible:ring-3 focus-visible:ring-ring/50"
 			>
-				{#if launcher.playerHead}
-					<!-- pixelated: a face is eight pixels wide, and smoothing it is mush -->
-					<img
-						src={launcher.playerHead}
-						alt=""
-						class="size-7 shrink-0 rounded-sm [image-rendering:pixelated]"
-					/>
-				{:else}
-					<div class="size-7 shrink-0 rounded-sm bg-muted"></div>
-				{/if}
+				<PlayerHead skin={launcher.skinTexture} size={32} />
 
 				<span class="min-w-0 flex-1">
 					<span class="block truncate text-sm">

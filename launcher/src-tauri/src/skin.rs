@@ -102,6 +102,42 @@ fn default_skin(uuid: &str) -> Option<Vec<u8>> {
     None
 }
 
+/// The whole skin texture, for a window that wants to draw more than the face.
+///
+/// Uncropped on purpose: slicing six faces here would mean six data urls to keep in step, and
+/// the one place that needs them can cut a 64x64 png with a background-position. Normalised to
+/// 64x64 first, because a pre-1.8 skin is 64x32 and has no second layer below the head.
+pub async fn texture(client: &reqwest::Client, uuid: &str, online: bool) -> Option<String> {
+    let bytes = if online {
+        skin_from_mojang(client, uuid).await.ok()?
+    } else {
+        default_skin(uuid)?
+    };
+    let skin = image::load(Cursor::new(&bytes), image::ImageFormat::Png)
+        .ok()?
+        .to_rgba8();
+    if skin.width() < 64 || skin.height() < 32 {
+        return None;
+    }
+
+    // A 64x32 skin is already the right width; the rows below simply do not exist, and an
+    // empty bottom half is exactly what "this skin has no overlay there" should look like.
+    let square: RgbaImage = if skin.height() >= 64 {
+        skin
+    } else {
+        let mut grown = RgbaImage::new(64, 64);
+        imageops::overlay(&mut grown, &skin, 0, 0);
+        grown
+    };
+
+    let mut out = Cursor::new(Vec::new());
+    square.write_to(&mut out, image::ImageFormat::Png).ok()?;
+    Some(format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(out.into_inner())
+    ))
+}
+
 /// The head with the hat layer over it. Nearest-neighbour: a skin is 64 pixels wide.
 fn render(texture: &[u8]) -> Result<String> {
     let skin = image::load(Cursor::new(texture), image::ImageFormat::Png)?.to_rgba8();

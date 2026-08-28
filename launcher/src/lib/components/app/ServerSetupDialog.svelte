@@ -86,7 +86,12 @@
 			<Dialog.Description class="truncate">{server?.name ?? ""}</Dialog.Description>
 		</Dialog.Header>
 
-		<div class="space-y-4 py-2">
+		<!--
+			A scroll area, not a plain box. The window may be as short as 520px and this dialog
+			is taller than that: without it the loader picker and the failure box below it sit
+			behind the footer with no way to reach them.
+		-->
+		<div class="max-h-[58vh] space-y-4 overflow-y-auto py-2 pr-1">
 			<p class="text-xs leading-relaxed text-muted-foreground">{t("setup.description")}</p>
 
 			<div class="flex items-baseline gap-2 rounded-lg bg-muted/50 px-3 py-2">

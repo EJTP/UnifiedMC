@@ -1,12 +1,14 @@
 import {
 	call,
+	downloadAndInstall,
 	onClosing,
 	onConsole,
 	onHosts,
 	onProgress,
 	onRunning,
 	onSignIn,
-	pickPack
+	pickPack,
+	relaunch
 } from "./bridge";
 import { locale, resolveLocale, t, translate } from "./i18n.svelte";
 import { applyAccent } from "./theme";
@@ -86,6 +88,8 @@ class LauncherState {
 	unknownServerIcon = $state<string | null>(null);
 	/** The player's face, from their skin. Fetched separately so the window draws first. */
 	playerHead = $state<string | null>(null);
+	/** Their whole skin, which the sidebar's head is cut out of in three dimensions. */
+	skinTexture = $state<string | null>(null);
 	/** The one launch being prepared. Serial: two at once fight over the same blob store. */
 	playing = $state<string | null>(null);
 
@@ -110,6 +114,12 @@ class LauncherState {
 	release = $state<Release | null>(null);
 	/** Whether the player has dismissed the update banner for this run. */
 	updateDismissed = $state(false);
+	/** How the install is going: idle, then a fraction, then waiting to be restarted. */
+	updating = $state(false);
+	updateDone = $state(false);
+	updateBytes = $state(0);
+	updateTotal = $state<number | null>(null);
+	updateError = $state<string | null>(null);
 
 	/** The window is closing and waiting for the servers it started to save their worlds. */
 	closing = $state(false);
@@ -158,6 +168,7 @@ class LauncherState {
 
 		// both need the network, so neither may hold up the first paint
 		void call<string | null>("player_head").then((head) => (this.playerHead = head));
+		void call<string | null>("skin_texture").then((skin) => (this.skinTexture = skin));
 		void this.loadVersions();
 		// A hosted server that started or stopped is a row that has to change, and the process
 		// that did it is not the one this window asked.
@@ -352,10 +363,47 @@ class LauncherState {
 
 	/* ------------------------------------------------------------------ updates. */
 
+	/**
+	 * Fetch the new version and write it over this one.
+	 *
+	 * The updater verifies the signature on what it downloads against the public key built
+	 * into this binary, so a release that was not signed with the matching private key is
+	 * refused rather than installed.
+	 */
+	async installUpdate() {
+		if (this.updating || this.updateDone) return;
+		this.updating = true;
+		this.updateError = null;
+		this.updateBytes = 0;
+		this.updateTotal = null;
+		try {
+			const did = await downloadAndInstall((bytes, total) => {
+				this.updateBytes = bytes;
+				this.updateTotal = total;
+			});
+			if (!did) {
+				// The banner said there was one; the updater disagrees. Its manifest is the
+				// authority - the banner only compares tag names.
+				this.updateError = t("update.notOffered");
+				return;
+			}
+			this.updateDone = true;
+		} catch (error) {
+			this.updateError = translate(String(error));
+		} finally {
+			this.updating = false;
+		}
+	}
+
+	async restart() {
+		await relaunch();
+	}
+
+	/** The release page, for anyone who would rather read it than press a button. */
 	async openRelease() {
 		if (!this.release) return;
 		try {
-			await call("open_release", { url: this.release.download ?? this.release.url });
+			await call("open_release", { url: this.release.url });
 		} catch (error) {
 			this.error = translate(String(error));
 		}
@@ -793,6 +841,7 @@ class LauncherState {
 	async refreshHead() {
 		try {
 			this.playerHead = await call<string | null>("player_head");
+			this.skinTexture = await call<string | null>("skin_texture");
 		} catch {
 		// a stale face is better than none, and the change itself already reported
 		}

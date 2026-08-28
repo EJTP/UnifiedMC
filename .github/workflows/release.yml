@@ -42,6 +42,8 @@ jobs:
         working-directory: launcher
         env:
           UNIFIEDMC_CF_KEY: ${{ secrets.UNIFIEDMC_CF_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
 
       # The CLI is a second binary out of the same crate: it turns a modpack into a server
       # directory, which is the other half of this project and useless if you have to build it
@@ -60,8 +62,10 @@ jobs:
           tag="${{ inputs.tag || github.ref_name }}"
           # WiX writes an .msi, NSIS an .exe. Both are wanted: the msi for anyone deploying it,
           # the exe for a person who just wants to double-click something.
+          # The .sig and the .zip beside them are what the in-app updater reads; the
+          # installers are for a person downloading by hand.
           files=$(find launcher/src-tauri/target/release/bundle -type f \
-            \( -name '*.msi' -o -name '*-setup.exe' \))
+            \( -name '*.msi' -o -name '*-setup.exe' -o -name '*.sig' -o -name '*-setup.nsis.zip' \))
           cli=launcher/src-tauri/target/release/unifiedmc-server-cli.exe
           test -f "$cli" && files="$files $cli"
           test -n "$files" || { echo "nothing was bundled"; exit 1; }
@@ -134,6 +138,8 @@ jobs:
         working-directory: launcher
         env:
           UNIFIEDMC_CF_KEY: ${{ secrets.UNIFIEDMC_CF_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
 
 
       - name: Attach the disk image to the release
@@ -145,7 +151,7 @@ jobs:
           # The .dmg alone. Tauri also leaves the .app next to it, but that is a directory,
           # and a release asset has to be one file.
           files=$(find launcher/src-tauri/target/universal-apple-darwin/release/bundle \
-            -type f -name '*.dmg')
+            -type f \( -name '*.dmg' -o -name '*.app.tar.gz' -o -name '*.sig' \))
           cli=launcher/src-tauri/unifiedmc-server-cli-macos
           test -f "$cli" && files="$files $cli"
           test -n "$files" || { echo "nothing was bundled"; exit 1; }
@@ -189,6 +195,8 @@ jobs:
         working-directory: launcher
         env:
           UNIFIEDMC_CF_KEY: ${{ secrets.UNIFIEDMC_CF_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
 
       - run: cargo build --release --bin unifiedmc-server-cli
         working-directory: launcher/src-tauri
@@ -205,7 +213,7 @@ jobs:
           # to download and run, the deb and the rpm for the two families that would rather
           # their package manager knew about it.
           files=$(find launcher/src-tauri/target/release/bundle -type f \
-            \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \))
+            \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name '*.sig' \))
           cli=launcher/src-tauri/target/release/unifiedmc-server-cli
           if [ -f "$cli" ]; then
             cp "$cli" unifiedmc-server-cli-linux
@@ -214,3 +222,31 @@ jobs:
           test -n "$files" || { echo "nothing was bundled"; exit 1; }
           echo "$files"
           gh release upload "$tag" $files --clobber
+
+  # The file the in-app updater actually reads. It can only be written once every platform has
+  # uploaded its signature, which is why this waits for all three rather than each job writing
+  # its own third of it.
+  manifest:
+    name: Update manifest
+    needs: [windows, macos, linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - name: Assemble latest.json from what the three builds signed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          tag="${{ inputs.tag || github.ref_name }}"
+          work=$(mktemp -d)
+          gh release download "$tag" --dir "$work" --pattern '*.sig' --clobber
+          gh release view "$tag" --json body --jq .body > "$work/notes.md"
+
+          python3 .github/scripts/latest_json.py "$tag" "$work" "$work/latest.json"
+          cat "$work/latest.json"
+          gh release upload "$tag" "$work/latest.json" --clobber

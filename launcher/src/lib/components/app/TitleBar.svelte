@@ -3,6 +3,9 @@
 	import { inTauri } from "$lib/bridge";
 	import { t } from "$lib/i18n.svelte";
 	import { launcher } from "$lib/state.svelte";
+	import UpdateDialog from "./UpdateDialog.svelte";
+
+	let updateOpen = $state(false);
 
 	/**
 	 * The window's own bar, because the system one is off. The API is loaded on demand: in a
@@ -42,7 +45,7 @@
 	{#if launcher.release && !launcher.updateDismissed}
 		<button
 			type="button"
-			onclick={() => launcher.openRelease()}
+			onclick={() => (updateOpen = true)}
 			title={t("update.hint", { version: launcher.release.latest })}
 			class="mr-1 flex items-center gap-1.5 rounded-full bg-primary/15 px-2.5 py-1 text-xs
 			       text-foreground/90 outline-none transition-colors hover:bg-primary/25
@@ -93,4 +96,6 @@
 			<X class="size-4" />
 		</button>
 	{/if}
+
+	<UpdateDialog bind:open={updateOpen} />
 </header>

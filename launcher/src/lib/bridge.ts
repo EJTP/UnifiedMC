@@ -54,6 +54,49 @@ export async function onHosts(handler: () => void): Promise<() => void> {
 }
 
 /**
+ * The update itself: check, download, install, relaunch.
+ *
+ * Everything here is the updater plugin's, not ours - it verifies the signature on what it
+ * downloads against the public key compiled into the app, which is the whole reason an
+ * in-place update is safe to offer at all. Outside Tauri it reports "nothing to do", because
+ * a browser has no binary to replace.
+ */
+export async function downloadAndInstall(
+	onProgress: (downloaded: number, total: number | null) => void
+): Promise<boolean> {
+	if (!inTauri) {
+		return false;
+	}
+	const { check } = await import("@tauri-apps/plugin-updater");
+	const update = await check();
+	if (!update) {
+		return false;
+	}
+
+	let downloaded = 0;
+	let total: number | null = null;
+	await update.downloadAndInstall((event) => {
+		if (event.event === "Started") {
+			total = event.data.contentLength ?? null;
+			onProgress(0, total);
+		} else if (event.event === "Progress") {
+			downloaded += event.data.chunkLength;
+			onProgress(downloaded, total);
+		} else if (event.event === "Finished") {
+			onProgress(total ?? downloaded, total);
+		}
+	});
+	return true;
+}
+
+/** Restart into the version that was just written. */
+export async function relaunch(): Promise<void> {
+	if (!inTauri) return;
+	const { relaunch: restart } = await import("@tauri-apps/plugin-process");
+	await restart();
+}
+
+/**
  * The window was asked to close while servers were still up, and is waiting for them to save.
  * There is no cancelling it: the alternative is a corrupt world.
  */
@@ -328,6 +371,11 @@ function sample(command: string, args: Record<string, unknown>): unknown {
 			};
 		case "versions":
 			return ["1.21.11", "1.21.10", "1.21.8", "1.21.1", "1.20.6", "1.20.1", "1.16.5", "1.8.9"];
+		case "skin_texture":
+			// The default Steve, 64x64, so the sidebar's head can be looked at without a Rust
+			// build. Drawn here rather than fetched: nothing in a browser fallback may need
+			// the network to render.
+			return steveSkin();
 		case "player_head":
 			// Eight pixels of face, inline: the sidebar and the skin dialog both draw it, and
 			// neither is testable against a null.
@@ -335,6 +383,42 @@ function sample(command: string, args: Record<string, unknown>): unknown {
 		default:
 			return null;
 	}
+}
+
+/**
+ * A minimal stand-in skin: a 64x64 png with the head squares filled in. Not Mojang's texture -
+ * that one belongs to Mojang and is read from the client jar on a real machine - just enough
+ * coloured squares in the right places to prove the cube is cut correctly.
+ */
+function steveSkin(): string {
+	if (typeof document === "undefined") return "";
+	const canvas = document.createElement("canvas");
+	canvas.width = 64;
+	canvas.height = 64;
+	const paint = canvas.getContext("2d");
+	if (!paint) return "";
+
+	// base head: right, front, left, back on row 8; top and bottom on row 0
+	const base: [number, number, string][] = [
+		[0, 8, "#8a6244"], [8, 8, "#b2836a"], [16, 8, "#8a6244"], [24, 8, "#7a5540"],
+		[8, 0, "#3f2a1d"], [16, 0, "#6b4a36"]
+	];
+	for (const [x, y, colour] of base) {
+		paint.fillStyle = colour;
+		paint.fillRect(x, y, 8, 8);
+	}
+	// The overlay layer, 32 to the right. Mostly transparent, the way a real skin's is - a
+	// solid one would cover the face entirely and prove nothing about the layering.
+	paint.fillStyle = "#2f6f4f";
+	paint.fillRect(40, 0, 8, 8); // the top of the hat
+	for (const [x] of [[32], [40], [48], [56]]) {
+		paint.fillRect(x, 8, 8, 2); // a brim, two pixels deep, all the way round
+	}
+	// two eyes, so it is obvious which way the face is pointing
+	paint.fillStyle = "#ffffff";
+	paint.fillRect(10, 12, 2, 2);
+	paint.fillRect(14, 12, 2, 2);
+	return canvas.toDataURL("image/png");
 }
 
 /** How much of each category the sample pack server ships. */

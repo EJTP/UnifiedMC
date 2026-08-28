@@ -88,6 +88,15 @@ async fn player_head(state: State<'_, App>) -> Result<Option<String>, String> {
     Ok(skin::head(&state.client, &session.uuid, session.is_online()).await)
 }
 
+/// The player's whole skin, for the head the sidebar draws in three dimensions. Its own
+/// command for the same reason `player_head` is: the window must not wait on Mojang to paint.
+#[tauri::command]
+async fn skin_texture(state: State<'_, App>) -> Result<Option<String>, String> {
+    let settings = Settings::load();
+    let session = session::current(&state.client, &settings.offline_name).await;
+    Ok(skin::texture(&state.client, &session.uuid, session.is_online()).await)
+}
+
 #[tauri::command]
 async fn bootstrap(state: State<'_, App>) -> Result<Bootstrap, String> {
     let settings = Settings::load();
@@ -1187,6 +1196,9 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        // Restarting into the version the updater just wrote is the last step of installing it.
+        .plugin(tauri_plugin_process::init())
         // In setup rather than manage(): the console watcher needs a handle to emit through,
         // and that only exists once the app has been built.
         .setup(|app| {
@@ -1232,6 +1244,7 @@ pub fn run() {
             sign_in,
             sign_out,
             player_head,
+            skin_texture,
             add_server,
             remove_server,
             configure,

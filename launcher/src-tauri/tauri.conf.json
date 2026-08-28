@@ -35,6 +35,15 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDdCQ0ZCRTRGODM2RTc5OTEKUldTUmVXNkRUNzdQZSt5N295ZnZoZVo5TDNhRUJYZmJ6TENpS1ZmRHpVeGU2ZDk4TXhIZmk0VFIK",
+      "endpoints": [
+        "https://github.com/EJTP/UnifiedMC/releases/latest/download/latest.json"
+      ]
+    }
   }
 }
