@@ -61,6 +61,9 @@
 	 */
 	const REST_YAW = -0.38;
 	const REST_PITCH = -0.2;
+	/** As far down as it will look, and the nearest it comes to level. */
+	const LOOK_DOWN = -0.55;
+	const LEVEL = -0.08;
 
 	/** Where the head is turning to, and where it has got to. */
 	let wantYaw = $state(REST_YAW);
@@ -198,7 +201,12 @@
 		// Past about forty degrees the face turns away, which is not what a portrait is for.
 		wantYaw = clamp(dx) * 0.7;
 		// A cursor below means the head looks down, which shows the top of it - hence the sign.
-		wantPitch = -clamp(dy) * 0.45;
+		//
+		// Never past level, though. This head lives at the bottom of the sidebar, so the
+		// pointer is nearly always above it, and letting it tip that far back would park it
+		// on its own chin. The underside of a skin is the one face nobody textures - it is
+		// usually a dark band, because it was never meant to be looked at.
+		wantPitch = Math.max(LOOK_DOWN, Math.min(LEVEL, -clamp(dy) * 0.45));
 		lastMoved = performance.now();
 	}
 
@@ -219,7 +227,7 @@
 		const calm = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
 		if (calm) {
 			yaw = wantYaw;
-			pitch = wantPitch;
+			pitch = Math.min(wantPitch, LEVEL / 2);
 			return;
 		}
 		let frame = requestAnimationFrame(function tick(now: number) {
@@ -229,6 +237,8 @@
 			const bob = idle ? Math.sin(now / 1300) * 0.045 : 0;
 			yaw += (wantYaw + sway - yaw) * 0.08;
 			pitch += (wantPitch + bob - pitch) * 0.08;
+			// The sway must not push it past level either, or the chin shows on the upswing.
+			pitch = Math.min(pitch, LEVEL / 2);
 			frame = requestAnimationFrame(tick);
 		});
 		return () => cancelAnimationFrame(frame);
