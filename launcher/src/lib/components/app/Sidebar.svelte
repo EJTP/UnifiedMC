@@ -158,7 +158,7 @@
 				class="-mx-1 flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-1 py-0.5 text-left
 				       outline-none transition-colors hover:bg-accent/40 focus-visible:ring-3 focus-visible:ring-ring/50"
 			>
-				<PlayerHead skin={launcher.skinTexture} fallback={launcher.playerHead} size={32} />
+				<PlayerHead skin={launcher.skinTexture} fallback={launcher.playerHead} size={40} />
 
 				<span class="min-w-0 flex-1">
 					<span class="block truncate text-sm">
