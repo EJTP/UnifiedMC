@@ -29,18 +29,25 @@
 	} = $props();
 
 	/**
-	 * Where each face lives in a 64x64 skin, as (x, y) of its top-left pixel.
+	 * Where each face lives in a 64x64 skin, as (x, y) of its top-left pixel, and how far it
+	 * is turned before being pushed out to the surface of the cube.
 	 *
 	 * The overlay layer is the same six squares shifted 32 to the right, which is the whole
 	 * reason this is a table and not twelve hand-written positions.
+	 *
+	 * The push-out distance is written into each transform rather than read from a CSS custom
+	 * property. `style:--half` does not compile to a `setProperty` call, so the variable was
+	 * never set, `translateZ(var(--half))` was invalid, and the browser dropped the whole
+	 * transform - which stacks all six faces flat on top of each other and draws no cube at
+	 * all. Nothing here may depend on a variable this component does not set itself.
 	 */
 	const FACES = [
-		{ name: "front", x: 8, y: 8, transform: "translateZ(var(--half))" },
-		{ name: "back", x: 24, y: 8, transform: "rotateY(180deg) translateZ(var(--half))" },
-		{ name: "right", x: 0, y: 8, transform: "rotateY(-90deg) translateZ(var(--half))" },
-		{ name: "left", x: 16, y: 8, transform: "rotateY(90deg) translateZ(var(--half))" },
-		{ name: "top", x: 8, y: 0, transform: "rotateX(90deg) translateZ(var(--half))" },
-		{ name: "bottom", x: 16, y: 0, transform: "rotateX(-90deg) translateZ(var(--half))" }
+		{ name: "front", x: 8, y: 8, turn: "" },
+		{ name: "back", x: 24, y: 8, turn: "rotateY(180deg) " },
+		{ name: "right", x: 0, y: 8, turn: "rotateY(-90deg) " },
+		{ name: "left", x: 16, y: 8, turn: "rotateY(90deg) " },
+		{ name: "top", x: 8, y: 0, turn: "rotateX(90deg) " },
+		{ name: "bottom", x: 16, y: 0, turn: "rotateX(-90deg) " }
 	];
 
 	/** The overlay's own squares sit exactly 32 pixels right of the base ones. */
@@ -106,7 +113,6 @@
 			style:width="{px}px"
 			style:height="{px}px"
 			style:transform="rotateX({pitch}deg) rotateY({yaw}deg)"
-			style:--half="{px / 2}px"
 		>
 			{#each [0, OVERLAY_OFFSET] as layer (layer)}
 				{@const isOverlay = layer > 0}
@@ -124,7 +130,7 @@
 							style:background-image="url({skin})"
 							style:background-size="{unit * 64}px {unit * 64}px"
 							style:background-position="-{(face.x + layer) * unit}px -{face.y * unit}px"
-							style:transform={face.transform}
+							style:transform="{face.turn}translateZ({px / 2}px)"
 						></div>
 					{/each}
 				</div>

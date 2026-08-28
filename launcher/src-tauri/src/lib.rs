@@ -94,7 +94,23 @@ async fn player_head(state: State<'_, App>) -> Result<Option<String>, String> {
 async fn skin_texture(state: State<'_, App>) -> Result<Option<String>, String> {
     let settings = Settings::load();
     let session = session::current(&state.client, &settings.offline_name).await;
-    Ok(skin::texture(&state.client, &session.uuid, session.is_online()).await)
+    let texture = skin::texture(&state.client, &session.uuid, session.is_online()).await;
+    // Said out loud when it comes back empty: a head that will not draw was very hard to
+    // tell apart from a head that drew nothing, and this is the line that separates them.
+    match &texture {
+        Some(data) => eprintln!(
+            "skin_texture: {} chars for {} (online: {})",
+            data.len(),
+            session.uuid,
+            session.is_online()
+        ),
+        None => eprintln!(
+            "skin_texture: nothing for {} (online: {}) - the head falls back to the flat face",
+            session.uuid,
+            session.is_online()
+        ),
+    }
+    Ok(texture)
 }
 
 #[tauri::command]
