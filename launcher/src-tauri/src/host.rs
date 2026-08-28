@@ -135,27 +135,29 @@ pub fn java_needed(minecraft: &str) -> u32 {
     }
 }
 
+/// The `java` inside a runtime directory, wherever that platform keeps it.
+fn binary_in(home: &Path) -> Option<(PathBuf, PathBuf)> {
+    let name = if cfg!(windows) { "java.exe" } else { "java" };
+    // macOS nests the runtime one level further down inside the bundle.
+    [home.to_path_buf(), home.join("jre.bundle/Contents/Home")]
+        .into_iter()
+        .map(|home| {
+            let java = home.join("bin").join(name);
+            (home, java)
+        })
+        .find(|(_, java)| java.is_file())
+}
+
 /// Every JRE the launcher has downloaded, as (major version, the java binary).
 fn runtimes() -> Vec<(u32, PathBuf)> {
-    let binary = if cfg!(windows) { "java.exe" } else { "java" };
-    let mut found = Vec::new();
-
     let Ok(entries) = std::fs::read_dir(crate::paths::minecraft().join("runtimes")) else {
-        return found;
+        return Vec::new();
     };
-    for entry in entries.flatten() {
-        let home = entry.path();
-        // macOS nests the runtime one level further down inside the bundle.
-        for home in [home.clone(), home.join("jre.bundle/Contents/Home")] {
-            let java = home.join("bin").join(binary);
-            if !java.is_file() {
-                continue;
-            }
-            found.push((release_major(&home).unwrap_or(0), java));
-            break;
-        }
-    }
-    found
+    entries
+        .flatten()
+        .filter_map(|entry| binary_in(&entry.path()))
+        .map(|(home, java)| (release_major(&home).unwrap_or(0), java))
+        .collect()
 }
 
 /// `JAVA_VERSION="21.0.4"` out of the `release` file every JDK build ships.
@@ -231,6 +233,192 @@ pub fn java(minecraft: &str) -> Result<PathBuf> {
         Some(major) if major >= needed => Ok(PathBuf::from("java")),
         Some(_) => Err(anyhow!("error.javaTooOld")),
         None => Err(anyhow!("error.noJava")),
+    }
+}
+
+/* ------------------------------------------------ getting one when there is none. */
+
+/// Mojang's index of the JREs it ships, the same one the game's own installer reads. What is
+/// fetched here lands where that one looks, so playing the version later downloads nothing.
+const JAVA_MANIFEST: &str = "https://launchermeta.mojang.com/v1/products/java-runtime/2ec0cc96c44e5a76b9c8b7c39df7210883d12871/all.json";
+
+/// How many of a runtime's four hundred small files are fetched at once.
+const PARALLEL_DOWNLOADS: usize = 8;
+
+/// A JVM that can run this Minecraft, fetching one from Mojang if this machine has none.
+///
+/// `java()` answers whenever there already is one. This is the part that makes "Java is not a
+/// prerequisite" true for a player who hosts a version they have never played - until now the
+/// launcher only ever had a runtime because the game had downloaded one to play with.
+pub async fn provide_java(
+    client: &reqwest::Client,
+    minecraft: &str,
+    say: Say<'_>,
+) -> Result<PathBuf> {
+    let error = match java(minecraft) {
+        Ok(java) => return Ok(java),
+        Err(error) => error,
+    };
+    // A path the player typed is theirs to be wrong about. Quietly downloading a second JVM
+    // and running on that would leave the setting doing nothing, with no way to tell.
+    if !crate::settings::Settings::load().java_path.trim().is_empty() {
+        return Err(error);
+    }
+    download_java(client, java_needed(minecraft), say).await
+}
+
+/// Which of Mojang's runtimes clears a floor. They are named rather than numbered: `gamma` is
+/// 17, `delta` is 21, and `jre-legacy` is the 8 that everything before 1.17 runs on.
+fn component_for(needed: u32) -> &'static str {
+    match needed {
+        0..=8 => "jre-legacy",
+        9..=17 => "java-runtime-gamma",
+        _ => "java-runtime-delta",
+    }
+}
+
+/// The key Mojang files its runtimes under for this machine.
+///
+/// Mostly `os-arch`, except where they only ever built one and dropped the suffix: Linux is
+/// plain "linux" unless it is 32-bit, and an Apple Silicon Mac gets the Intel build of Java 8
+/// because no ARM one was ever made.
+fn platform(needed: u32) -> Result<String> {
+    let os = match std::env::consts::OS {
+        "linux" => "linux",
+        "macos" => "mac-os",
+        "windows" => "windows",
+        _ => return Err(anyhow!("error.noJava")),
+    };
+    let arch = match std::env::consts::ARCH {
+        "x86" if os == "linux" => "i386",
+        "x86" => "x86",
+        "x86_64" => "x64",
+        "aarch64" => "arm64",
+        _ => return Err(anyhow!("error.noJava")),
+    };
+    let sole_build =
+        (os == "linux" && arch != "i386") || (os == "mac-os" && (arch != "arm64" || needed <= 8));
+    Ok(if sole_build {
+        os.to_string()
+    } else {
+        format!("{os}-{arch}")
+    })
+}
+
+/// Fetch the runtime Mojang publishes for this floor, and return the `java` inside it.
+async fn download_java(client: &reqwest::Client, needed: u32, say: Say<'_>) -> Result<PathBuf> {
+    let component = component_for(needed);
+    let platform = platform(needed)?;
+
+    let index: lyceris::json::java::JavaManifest = client
+        .get(JAVA_MANIFEST)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await
+        .context("reading Mojang's list of Java runtimes")?;
+    let build = index
+        .get(&platform)
+        .and_then(|by_component| by_component.get(component))
+        .and_then(|builds| builds.first())
+        .ok_or_else(|| anyhow!("error.noJava"))?;
+
+    let version = build.version.name.clone();
+    say("host.java", version.clone(), 0, 0);
+
+    let listing: lyceris::json::java::JavaFileManifest = client
+        .get(&build.manifest.url)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await
+        .with_context(|| format!("reading the file list for Java {version}"))?;
+
+    // Built beside the real name and moved over at the end: half a runtime is worse than none,
+    // because it looks installed and then dies on the first class it cannot find. A failed run
+    // leaves the staging directory behind, and the next one starts by clearing it.
+    let runtimes = crate::paths::minecraft().join("runtimes");
+    let home = runtimes.join(component);
+    let staging = crate::paths::minecraft().join("java-download").join(component);
+    let _ = std::fs::remove_dir_all(&staging);
+
+    let mut wanted = Vec::new();
+    let mut links = Vec::new();
+    for (name, file) in &listing.files {
+        let path = staging.join(name.replace('/', std::path::MAIN_SEPARATOR_STR));
+        match file.r#type.as_str() {
+            "directory" => {
+                std::fs::create_dir_all(&path)?;
+            }
+            "link" => links.push((path, file.target.clone().unwrap_or_default())),
+            _ => {
+                if let Some(downloads) = &file.downloads {
+                    wanted.push((path, downloads.raw.url.clone(), file.executable == Some(true)));
+                }
+            }
+        }
+    }
+    // The list is a map, so a file can come up before the directory holding it does.
+    let parents = wanted
+        .iter()
+        .map(|(path, ..)| path)
+        .chain(links.iter().map(|(path, _)| path));
+    for parent in parents.filter_map(|path| path.parent()) {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let total = wanted.len() as u64;
+    let mut done = 0u64;
+    use futures::StreamExt;
+    let mut running = futures::stream::iter(wanted.into_iter().map(|(path, url, executable)| {
+        let client = client.clone();
+        async move {
+            let bytes = fetch(&client, &url)
+                .await
+                .with_context(|| format!("fetching {url}"))?;
+            std::fs::write(&path, &bytes)?;
+            #[cfg(unix)]
+            if executable {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))?;
+            }
+            #[cfg(not(unix))]
+            let _ = executable;
+            Ok::<(), anyhow::Error>(())
+        }
+    }))
+    .buffer_unordered(PARALLEL_DOWNLOADS);
+
+    while let Some(outcome) = running.next().await {
+        outcome?;
+        done += 1;
+        say("host.java", version.clone(), done, total);
+    }
+
+    // Only Mojang's licence texts are links, and a Windows symlink needs a privilege the
+    // launcher has no business asking for, so there they are simply left out.
+    #[cfg(unix)]
+    for (path, target) in &links {
+        let _ = std::os::unix::fs::symlink(target, path);
+    }
+    #[cfg(not(unix))]
+    let _ = &links;
+
+    std::fs::create_dir_all(&runtimes)?;
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::rename(&staging, &home)?;
+
+    // Asked rather than assumed: a runtime that will not say what it is would be invisible to
+    // `runtimes()` on the next start, and downloaded again every single time.
+    let java = binary_in(&home).map(|(_, java)| java);
+    match java.as_deref().and_then(probe_major) {
+        Some(major) if major >= needed => Ok(java.unwrap_or_default()),
+        _ => {
+            let _ = std::fs::remove_dir_all(&home);
+            Err(anyhow!("error.noJava"))
+        }
     }
 }
 
@@ -358,7 +546,9 @@ pub async fn build(
         crate::settings::heap_mb(0, files)
     };
 
-    let java = java(&minecraft)?;
+    // Fetched here rather than demanded: hosting is often the first time a machine needs a
+    // JVM at all, and "install Java first" is not a launcher doing its job.
+    let java = provide_java(client, &minecraft, say).await?;
     let publishes = spec.publish && loader.as_deref().is_some_and(publisher_runs_on);
 
     if publishes {
@@ -1302,6 +1492,36 @@ mod tests {
         assert!(major_of("1.8.0_452").unwrap() < java_needed("1.17.1"));
     }
 
+    /// The three names Mojang gives its runtimes, against the floors this launcher asks for.
+    #[test]
+    fn every_floor_has_a_runtime_mojang_publishes_for_it() {
+        assert_eq!(component_for(java_needed("1.16.5")), "jre-legacy");
+        assert_eq!(component_for(java_needed("1.20.4")), "java-runtime-gamma");
+        assert_eq!(component_for(java_needed("1.21.8")), "java-runtime-delta");
+    }
+
+    /// Mojang drops the arch suffix wherever it only ever built one, and the key has to match
+    /// theirs exactly or the runtime is simply not in the index.
+    #[test]
+    fn the_platform_key_matches_the_one_mojang_files_the_build_under() {
+        let key = platform(21).unwrap();
+        let published = [
+            "linux",
+            "linux-i386",
+            "mac-os",
+            "mac-os-arm64",
+            "windows-arm64",
+            "windows-x64",
+            "windows-x86",
+        ];
+        assert!(published.contains(&key.as_str()), "{key}");
+
+        // No ARM build of Java 8 was ever made, so an Apple Silicon Mac runs the Intel one.
+        if key == "mac-os-arm64" {
+            assert_eq!(platform(8).unwrap(), "mac-os");
+        }
+    }
+
     #[test]
     fn the_console_says_who_arrived_and_who_left() {
         assert_eq!(
@@ -1324,6 +1544,31 @@ mod tests {
             None
         );
         assert_eq!(join_or_leave("no timestamp at all"), None);
+    }
+
+    /// The download, once, against the real internet. Java 17 rather than a floor this machine
+    /// is likely to already clear, so the fetch actually happens.
+    ///
+    /// Ignored by default because it pulls a whole JRE into the launcher's own runtimes
+    /// directory - where it then stays, and gets reused, which is the point:
+    ///
+    ///   cargo test --lib host::tests::a_runtime_this_machine_lacks_is_fetched -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore = "downloads a JRE from Mojang"]
+    async fn a_runtime_this_machine_lacks_is_fetched() {
+        let client = reqwest::Client::new();
+        let java = download_java(&client, 17, &|phase, detail, done, total| {
+            if done == 0 || done == total {
+                println!("{phase} {detail} {done}/{total}");
+            }
+        })
+        .await
+        .expect("no runtime");
+
+        assert!(java.is_file(), "{java:?}");
+        assert_eq!(probe_major(&java), Some(17));
+        // The next start has to find it without downloading it again.
+        assert!(runtimes().iter().any(|(major, _)| *major == 17));
     }
 
     /// The whole feature, once, against the real internet: build a vanilla server, start it,
