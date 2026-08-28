@@ -126,10 +126,12 @@
 		</Dialog.Header>
 
 		<!--
-			-mr-[10px] with a stable gutter on every tab body: the scrollbar is 10px wide, and
-			letting it eat into the fields instead of into the padding is what put the tab strip
-			and the fields under it on two different right edges - and moved them again whenever
-			a tab happened to be long enough to scroll.
+			A stable gutter on every tab body, so the fields do not shift sideways the moment a
+			tab is long enough to scroll.
+
+			The gutter used to be bought with -mr-[10px], which pulled the scrollbar out to the
+			dialog's edge - and made the body ten pixels wider than the box holding it, which
+			is a horizontal scrollbar on the dialog itself. The scrollbar sits inside now.
 		-->
 		<Tabs.Root bind:value={tab} class="flex min-h-0 flex-col">
 			<Tabs.List class="w-full">
@@ -137,7 +139,7 @@
 				<Tabs.Trigger value="java">{t("settings.tab.java")}</Tabs.Trigger>
 			</Tabs.List>
 
-			<Tabs.Content value="general" class="min-h-0 space-y-4 overflow-y-auto py-2 -mr-[10px] [scrollbar-gutter:stable]">
+			<Tabs.Content value="general" class="min-h-0 space-y-4 overflow-y-auto py-2 pr-1 [scrollbar-gutter:stable]">
 				<div class="space-y-2">
 					<span id="settings-language" class="block text-sm font-medium">
 						{t("settings.language")}
@@ -216,7 +218,7 @@
 				{/if}
 			</Tabs.Content>
 
-			<Tabs.Content value="java" class="min-h-0 space-y-4 overflow-y-auto py-2 -mr-[10px] [scrollbar-gutter:stable]">
+			<Tabs.Content value="java" class="min-h-0 space-y-4 overflow-y-auto py-2 pr-1 [scrollbar-gutter:stable]">
 				<div class="space-y-2.5">
 					<div class="flex items-baseline justify-between gap-3">
 						<span id="settings-memory" class="text-sm font-medium">

@@ -10,6 +10,10 @@ use serde::Serialize;
 
 const LATEST: &str = "https://api.github.com/repos/EJTP/UnifiedMC/releases/latest";
 
+/// The manifest the updater plugin installs from. The same url `tauri.conf.json` points it at,
+/// because this has to answer the question the plugin is about to ask.
+const MANIFEST: &str = "https://github.com/EJTP/UnifiedMC/releases/latest/download/latest.json";
+
 #[derive(Clone, Debug, Serialize)]
 pub struct Release {
     /// What is running, out of Cargo.toml at compile time.
@@ -17,8 +21,70 @@ pub struct Release {
     pub latest: String,
     pub url: String,
     pub notes: String,
-    /// The installer for this platform, when the release has one.
-    pub download: Option<String>,
+}
+
+/// What this build calls itself in the update manifest.
+///
+/// Must match the keys `.github/scripts/latest_json.py` writes, or an update is never offered
+/// to anybody. A target we do not publish for answers None, and is then told about nothing -
+/// which is the honest answer, since there would be nothing to install.
+fn platform_key() -> Option<String> {
+    let os = if cfg!(target_os = "windows") {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "darwin"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else {
+        return None;
+    };
+    let arch = if cfg!(target_arch = "x86_64") {
+        "x86_64"
+    } else if cfg!(target_arch = "aarch64") {
+        "aarch64"
+    } else {
+        return None;
+    };
+    Some(format!("{os}-{arch}"))
+}
+
+/// Whether the manifest is up and actually offers this platform a build of `version`.
+///
+/// The release is tagged minutes before its manifest is uploaded - the three platform builds
+/// have to finish first. In that window the tag says there is a new version and the updater
+/// has nothing to read, so pressing the button fails on a 404 that parses as "not valid JSON".
+/// Nobody is told about an update that cannot be installed yet.
+async fn installable(client: &reqwest::Client, version: &str) -> bool {
+    let Some(key) = platform_key() else {
+        return false;
+    };
+    let Ok(response) = client.get(MANIFEST).send().await else {
+        return false;
+    };
+    let Ok(manifest) = response.error_for_status() else {
+        return false;
+    };
+    let Ok(manifest) = manifest.json::<serde_json::Value>().await else {
+        return false;
+    };
+    offers(&manifest, version, &key)
+}
+
+/// The manifest is for this very version, and has an entry for this platform.
+///
+/// Both halves matter: a manifest left over from a build that only half succeeded can name an
+/// older version, and one that names the right version can still be missing the platform whose
+/// job failed.
+fn offers(manifest: &serde_json::Value, version: &str, key: &str) -> bool {
+    if manifest.get("version").and_then(|v| v.as_str()) != Some(version) {
+        return false;
+    }
+    manifest
+        .get("platforms")
+        .and_then(|p| p.get(key))
+        .and_then(|entry| entry.get("url"))
+        .and_then(|url| url.as_str())
+        .is_some_and(|url| !url.is_empty())
 }
 
 /// The newer release, or none - including when GitHub cannot be reached, which is not an error
@@ -53,6 +119,12 @@ pub async fn check(client: &reqwest::Client) -> Option<Release> {
         return None;
     }
 
+    // Asked before anything is shown, not when the button is pressed: an update badge that
+    // leads to an error is worse than no badge.
+    if !installable(client, latest).await {
+        return None;
+    }
+
     Some(Release {
         current: current.to_string(),
         latest: latest.to_string(),
@@ -66,31 +138,6 @@ pub async fn check(client: &reqwest::Client) -> Option<Release> {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string(),
-        download: asset_for_this_platform(&release),
-    })
-}
-
-/// Which of the release's files this machine can actually run.
-fn asset_for_this_platform(release: &serde_json::Value) -> Option<String> {
-    let wanted: &[&str] = if cfg!(windows) {
-        // NSIS over WiX: the .exe is the one a person double-clicks.
-        &["-setup.exe", ".msi"]
-    } else if cfg!(target_os = "macos") {
-        &[".dmg", ".app.tar.gz"]
-    } else {
-        &[".AppImage", ".deb", ".rpm"]
-    };
-
-    let assets = release.get("assets")?.as_array()?;
-    // In preference order, so a release carrying both formats hands over the better one.
-    wanted.iter().find_map(|suffix| {
-        assets.iter().find_map(|asset| {
-            let name = asset.get("name")?.as_str()?;
-            name.ends_with(suffix)
-                .then(|| asset.get("browser_download_url")?.as_str())
-                .flatten()
-                .map(str::to_string)
-        })
     })
 }
 
@@ -126,6 +173,52 @@ mod tests {
     use super::*;
 
     #[test]
+    fn nothing_is_offered_until_the_manifest_can_actually_install_it() {
+        let key = "linux-x86_64";
+        let ready = serde_json::json!({
+            "version": "0.1.10",
+            "platforms": { "linux-x86_64": { "url": "https://x/a.AppImage", "signature": "s" } }
+        });
+        assert!(offers(&ready, "0.1.10", key));
+
+        // The window this exists for: the tag is up, the manifest job has not run yet.
+        assert!(!offers(&serde_json::json!({}), "0.1.10", key));
+
+        // A manifest left behind by the previous release.
+        assert!(!offers(&ready, "0.1.11", key));
+
+        // Built, but this platform's job failed, so there is nothing for us in it.
+        let partial = serde_json::json!({
+            "version": "0.1.10",
+            "platforms": { "windows-x86_64": { "url": "https://x/a.exe", "signature": "s" } }
+        });
+        assert!(!offers(&partial, "0.1.10", key));
+
+        // Present but empty is not an offer either.
+        let empty = serde_json::json!({
+            "version": "0.1.10",
+            "platforms": { "linux-x86_64": { "url": "", "signature": "s" } }
+        });
+        assert!(!offers(&empty, "0.1.10", key));
+    }
+
+    #[test]
+    fn this_build_knows_which_manifest_entry_is_its_own() {
+        let key = platform_key().expect("a target we publish for");
+        // The four the manifest generator writes; anything else would never match.
+        assert!(
+            [
+                "linux-x86_64",
+                "darwin-x86_64",
+                "darwin-aarch64",
+                "windows-x86_64"
+            ]
+            .contains(&key.as_str()),
+            "{key} is not a key latest_json.py writes"
+        );
+    }
+
+    #[test]
     fn versions_are_compared_as_numbers_not_as_text() {
         assert!(newer("0.1.8", "0.1.7"));
         assert!(!newer("0.1.7", "0.1.7"));
@@ -137,29 +230,5 @@ mod tests {
         assert!(newer("1.0", "0.9.9"));
         // a tag that is not a version must not read as an upgrade
         assert!(!newer("nightly", "0.1.7"));
-    }
-
-    #[test]
-    fn the_offered_download_is_one_this_machine_can_run() {
-        let release = serde_json::json!({
-            "assets": [
-                { "name": "UnifiedMC_0.1.8_amd64.deb", "browser_download_url": "https://x/deb" },
-                { "name": "UnifiedMC_0.1.8_x64-setup.exe", "browser_download_url": "https://x/exe" },
-                { "name": "UnifiedMC_0.1.8_x64_en-US.msi", "browser_download_url": "https://x/msi" },
-                { "name": "UnifiedMC_0.1.8.AppImage", "browser_download_url": "https://x/appimage" }
-            ]
-        });
-        let got = asset_for_this_platform(&release).unwrap();
-        if cfg!(windows) {
-            assert_eq!(got, "https://x/exe", "the double-clickable one wins");
-        } else if cfg!(target_os = "linux") {
-            assert_eq!(got, "https://x/appimage");
-        }
-
-        // A release with only the CLI attached offers nothing rather than the wrong file.
-        let cli_only = serde_json::json!({
-            "assets": [{ "name": "unifiedmc-server-cli.exe", "browser_download_url": "https://x/cli" }]
-        });
-        assert_eq!(asset_for_this_platform(&cli_only), None);
     }
 }

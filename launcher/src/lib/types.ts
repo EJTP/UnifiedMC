@@ -160,7 +160,6 @@ export interface Release {
 	latest: string;
 	url: string;
 	notes: string;
-	download: string | null;
 }
 
 /** What the player has to do while the sign-in waits for them. */

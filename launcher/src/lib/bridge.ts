@@ -366,8 +366,7 @@ function sample(command: string, args: Record<string, unknown>): unknown {
 				current: "0.1.7",
 				latest: "0.1.8",
 				url: "https://github.com/EJTP/UnifiedMC/releases/tag/v0.1.8",
-				notes: "Local servers, and a launcher that says when it is out of date.",
-				download: null
+				notes: "Local servers, and a launcher that says when it is out of date."
 			};
 		case "versions":
 			return ["1.21.11", "1.21.10", "1.21.8", "1.21.1", "1.20.6", "1.20.1", "1.16.5", "1.8.9"];

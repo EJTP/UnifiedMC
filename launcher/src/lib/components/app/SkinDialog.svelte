@@ -131,7 +131,7 @@
 						type="file"
 						accept="image/png"
 						onchange={choose}
-						class="block w-full cursor-pointer overflow-hidden rounded-lg border border-input bg-input/40
+						class="block w-full min-w-0 cursor-pointer overflow-hidden rounded-lg border border-input bg-input/40
 						       text-sm text-muted-foreground outline-none focus-visible:border-ring
 						       focus-visible:ring-3 focus-visible:ring-ring/50
 						       file:mr-3 file:cursor-pointer file:border-0 file:bg-secondary file:px-3 file:py-2
