@@ -31,6 +31,12 @@ pub struct Settings {
     pub accent_cta: String,
     /// Which set of surface tones the window is built out of.
     pub backdrop: String,
+    /// The `java` binary hosted servers run on, or empty to let the launcher pick one.
+    ///
+    /// Only hosting: the game itself runs on the runtime Mojang ships with the version. A
+    /// server needs a JVM the launcher may never have had a reason to download, and this is
+    /// the one thing the player can do about that without playing the version first.
+    pub java_path: String,
 }
 
 impl Default for Settings {
@@ -46,6 +52,7 @@ impl Default for Settings {
             accent_primary: "#7c3aed".into(),
             accent_cta: "#f43f5e".into(),
             backdrop: "midnight".into(),
+            java_path: String::new(),
         }
     }
 }

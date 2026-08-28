@@ -6,7 +6,7 @@
 	import { Input } from "$lib/components/ui/input";
 	import { Slider } from "$lib/components/ui/slider";
 	import { Switch } from "$lib/components/ui/switch";
-	import { call } from "$lib/bridge";
+	import { call, pickJava } from "$lib/bridge";
 	import { launcher } from "$lib/state.svelte";
 	import { t, LOCALES } from "$lib/i18n.svelte";
 	import {
@@ -139,6 +139,12 @@
 	const autoMb = $derived(Number(flags.find((f) => f.startsWith("-Xmx"))?.match(/\d+/)?.[0] ?? 0));
 
 
+	/** The native picker rather than a typed path: a wrong one is a server that will not start. */
+	async function chooseJava() {
+		const picked = await pickJava(t("settings.javaPathPick"));
+		if (picked) draft.java_path = picked;
+	}
+
 	async function save() {
 		await launcher.saveSettings($state.snapshot(draft));
 		open = false;
@@ -161,6 +167,10 @@
 			The gutter used to be bought with -mr-[10px], which pulled the scrollbar out to the
 			dialog's edge - and made the body ten pixels wider than the box holding it, which
 			is a horizontal scrollbar on the dialog itself. The scrollbar sits inside now.
+
+			px-1, not pr-1: a scrolling box clips at its own edge, and a focus ring - or the ring
+			the selected swatch wears - is painted outside the thing it belongs to. Flush left,
+			the first one in a row is the one that gets cut in half.
 		-->
 		<Tabs.Root bind:value={tab} class="flex min-h-0 flex-col">
 			<Tabs.List class="w-full">
@@ -168,7 +178,7 @@
 				<Tabs.Trigger value="java">{t("settings.tab.java")}</Tabs.Trigger>
 			</Tabs.List>
 
-			<Tabs.Content value="general" class="min-h-0 space-y-4 overflow-y-auto py-2 pr-1 [scrollbar-gutter:stable]">
+			<Tabs.Content value="general" class="min-h-0 space-y-4 overflow-x-hidden overflow-y-auto px-1 py-2 [scrollbar-gutter:stable]">
 				<div class="space-y-2">
 					<span id="settings-language" class="block text-sm font-medium">
 						{t("settings.language")}
@@ -306,7 +316,7 @@
 				{/if}
 			</Tabs.Content>
 
-			<Tabs.Content value="java" class="min-h-0 space-y-4 overflow-y-auto py-2 pr-1 [scrollbar-gutter:stable]">
+			<Tabs.Content value="java" class="min-h-0 space-y-4 overflow-x-hidden overflow-y-auto px-1 py-2 [scrollbar-gutter:stable]">
 				<div class="space-y-2.5">
 					<div class="flex items-baseline justify-between gap-3">
 						<span id="settings-memory" class="text-sm font-medium">
@@ -390,6 +400,25 @@
 						/>
 					</div>
 				{/if}
+
+				<div class="space-y-2">
+					<span id="settings-java-path" class="block text-sm font-medium">
+						{t("settings.javaPath")}
+					</span>
+					<!-- The path is what has to stay readable, so the button beside it is the short one. -->
+					<div class="flex items-center gap-2">
+						<Input
+							aria-labelledby="settings-java-path"
+							bind:value={draft.java_path}
+							placeholder={t("settings.memoryAuto")}
+							class="font-mono text-xs"
+						/>
+						<Button variant="outline" size="sm" class="shrink-0" onclick={chooseJava}>
+							{t("settings.javaPathPick")}
+						</Button>
+					</div>
+					<p class="text-xs text-muted-foreground">{t("settings.javaPathHint")}</p>
+				</div>
 
 				<div class="space-y-2">
 					<span class="block text-sm font-medium">{t("settings.flags")}</span>

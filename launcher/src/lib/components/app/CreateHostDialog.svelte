@@ -139,7 +139,7 @@
 		</Dialog.Header>
 
 		<form id="new-server" onsubmit={create}>
-			<div class="max-h-[58vh] space-y-4 overflow-y-auto py-2 pr-1">
+			<div class="max-h-[58vh] space-y-4 overflow-x-hidden overflow-y-auto px-1 py-2">
 				<!--
 					The pack first, because it answers the two questions under it. A server built
 					from a pack has its version and loader decided; one built from nothing asks.

@@ -91,7 +91,7 @@
 			is taller than that: without it the loader picker and the failure box below it sit
 			behind the footer with no way to reach them.
 		-->
-		<div class="max-h-[58vh] space-y-4 overflow-y-auto py-2 pr-1">
+		<div class="max-h-[58vh] space-y-4 overflow-x-hidden overflow-y-auto px-1 py-2">
 			<p class="text-xs leading-relaxed text-muted-foreground">{t("setup.description")}</p>
 
 			<div class="flex items-baseline gap-2 rounded-lg bg-muted/50 px-3 py-2">

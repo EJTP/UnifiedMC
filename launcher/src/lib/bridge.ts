@@ -126,6 +126,16 @@ export async function pickPack(title: string): Promise<string | null> {
 	return typeof picked === "string" ? picked : null;
 }
 
+/** The same picker, for the one binary a player may have to name themselves. */
+export async function pickJava(title: string): Promise<string | null> {
+	if (!inTauri) {
+		return "/usr/lib/jvm/java-21-openjdk/bin/java";
+	}
+	const { open } = await import("@tauri-apps/plugin-dialog");
+	const picked = await open({ title, multiple: false, directory: false });
+	return typeof picked === "string" ? picked : null;
+}
+
 export async function onProgress(handler: (progress: Progress) => void): Promise<() => void> {
 	if (!inTauri) {
 		return () => {};
@@ -148,7 +158,8 @@ function sample(command: string, args: Record<string, unknown>): unknown {
 				settings: {
 					language: "system", memory: 0, offline_name: "Player",
 					keep_open: true, jvm_profile: "balanced", jvm_args: "", accent: "violet",
-					accent_primary: "#7c3aed", accent_cta: "#f43f5e", backdrop: "midnight"
+					accent_primary: "#7c3aed", accent_cta: "#f43f5e", backdrop: "midnight",
+					java_path: ""
 				},
 				session: { name: "EJTP", uuid: "0", kind: "microsoft" },
 				unknown_server_icon: null

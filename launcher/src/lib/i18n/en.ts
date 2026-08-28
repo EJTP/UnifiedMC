@@ -170,6 +170,10 @@ export default {
 	"settings.flagsAutoHint":
 		"On auto the heap grows with the mod count; this shows the value for a pack with no mods.",
 	"settings.customArgs": "Custom flags",
+	"settings.javaPath": "Java for your own servers",
+	"settings.javaPathHint":
+		"Leave empty and the launcher uses the runtime it downloaded to play with. Naming one yourself is the way out when it has none that fits: Minecraft 1.17 needs Java 17 or newer, 1.20.5 and up need 21, anything older needs 8. Hosting only — the game brings its own runtime.",
+	"settings.javaPathPick": "Choose Java",
 	"settings.dataDir": "Data directory",
 
 	/* ------------------------------------------------------------- progress. */
@@ -311,7 +315,9 @@ export default {
 	"error.stopItFirst": "Stop the server before deleting it.",
 	"error.portTaken": "Another server here already uses that port.",
 	"error.portTooLow": "Ports below 1024 need administrator rights.",
-	"error.noJava": "No Java found. Start any Minecraft version once and the launcher downloads one, or install a JDK 21.",
+	"error.noJava": "No Java found. Start any Minecraft version once and the launcher downloads one, or install a JDK 21 and name it under Settings → Java.",
+	"error.javaTooOld": "The Java found here is too old for this Minecraft version. 1.17 needs Java 17 or newer, 1.20.5 and up need 21. Settings → Java is where to name one that fits.",
+	"error.javaNotRunnable": "The program named under Settings → Java would not run. It has to be the java binary itself — usually inside the JDK's bin folder.",
 	"error.curseforgeKeyNeeded": "This CurseForge pack names its files by id, and this build has no CurseForge key to resolve them with.",
 	"error.notOurRelease": "That link does not point at a UnifiedMC release.",
 	"host.join": "Add it to my servers",

@@ -43,7 +43,7 @@
 			</Dialog.Description>
 		</Dialog.Header>
 
-		<div class="max-h-[46vh] space-y-3 overflow-y-auto py-2 pr-1">
+		<div class="max-h-[46vh] space-y-3 overflow-x-hidden overflow-y-auto px-1 py-2">
 			{#if notes.length > 0}
 				<div class="space-y-1.5 rounded-lg bg-muted/40 px-3.5 py-3" data-selectable>
 					{#each notes as block, i (i)}

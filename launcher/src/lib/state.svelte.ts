@@ -83,7 +83,8 @@ class LauncherState {
 		accent: "violet",
 		accent_primary: "#7c3aed",
 		accent_cta: "#f43f5e",
-		backdrop: "midnight"
+		backdrop: "midnight",
+		java_path: ""
 	});
 	session = $state<Session | null>(null);
 	progress = $state<Progress | null>(null);

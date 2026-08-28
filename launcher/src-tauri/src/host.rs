@@ -164,8 +164,11 @@ fn release_major(home: &Path) -> Option<u32> {
     let line = release
         .lines()
         .find_map(|line| line.strip_prefix("JAVA_VERSION="))?;
-    let version = line.trim().trim_matches('"');
-    // "21.0.4" is 21; "1.8.0_452" is 8, because Java numbered itself differently until 9.
+    major_of(line.trim().trim_matches('"'))
+}
+
+/// "21.0.4" is 21; "1.8.0_452" is 8, because Java numbered itself differently until 9.
+fn major_of(version: &str) -> Option<u32> {
     let first: u32 = version.split('.').next()?.parse().ok()?;
     if first == 1 {
         version.split('.').nth(1)?.parse().ok()
@@ -174,34 +177,61 @@ fn release_major(home: &Path) -> Option<u32> {
     }
 }
 
+/// What a `java` binary says it is, or None if it is not one.
+///
+/// Asking rather than trusting: a JVM below the floor does not refuse to start the server, it
+/// starts it and dies on the first class it loads, and `UnsupportedClassVersionError` in a
+/// console is not something anybody reads as "wrong Java".
+fn probe_major(java: &Path) -> Option<u32> {
+    let output = std::process::Command::new(java)
+        .arg("-version")
+        .stdin(Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    // -version prints to stderr on every JVM ever shipped, as `openjdk version "21.0.4"`.
+    let text = String::from_utf8_lossy(&output.stderr);
+    major_of(text.split('"').nth(1)?)
+}
+
 /// A JVM new enough to run this Minecraft.
 ///
 /// The lowest one that clears the floor, not the newest: Forge on 1.16 wants Java 8 and dies
 /// on 21, and picking the smallest that works keeps that case right for free. Whatever is on
 /// PATH is the last resort - it is often a Java 8 that was installed for something else.
+///
+/// Resolved on every start rather than kept: a runtime can be deleted, and the player can
+/// point at a different one in the settings, and neither should need the server rebuilt.
 pub fn java(minecraft: &str) -> Result<PathBuf> {
     let needed = java_needed(minecraft);
+
+    // The player's own overrules everything. It is the only lever they have when the launcher
+    // has no runtime that fits and PATH holds the wrong one, so a bad one is said out loud
+    // rather than quietly skipped - a setting that silently does nothing is worse than none.
+    let chosen = crate::settings::Settings::load().java_path;
+    let chosen = chosen.trim();
+    if !chosen.is_empty() {
+        let path = PathBuf::from(chosen);
+        return match probe_major(&path) {
+            None => Err(anyhow!("error.javaNotRunnable")),
+            Some(major) if major < needed => Err(anyhow!("error.javaTooOld")),
+            Some(_) => Ok(path),
+        };
+    }
+
     let mut installed = runtimes();
     installed.sort_by_key(|(major, _)| *major);
-
     if let Some((_, java)) = installed.iter().find(|(major, _)| *major >= needed) {
         return Ok(java.clone());
     }
-    if which_java().is_some() {
-        return Ok(PathBuf::from("java"));
-    }
-    Err(anyhow!("error.noJava"))
-}
 
-fn which_java() -> Option<()> {
-    std::process::Command::new("java")
-        .arg("-version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .ok()
-        .filter(std::process::ExitStatus::success)
-        .map(|_| ())
+    match probe_major(Path::new("java")) {
+        Some(major) if major >= needed => Ok(PathBuf::from("java")),
+        Some(_) => Err(anyhow!("error.javaTooOld")),
+        None => Err(anyhow!("error.noJava")),
+    }
 }
 
 /* -------------------------------------------------------------- making one. */
@@ -931,10 +961,14 @@ impl Running {
         if !root.is_dir() {
             return Err(anyhow!("error.serverGone"));
         }
-        let (program, args) = server
+        let (_, args) = server
             .command
             .split_first()
             .ok_or_else(|| anyhow!("error.serverGone"))?;
+        // Not command[0]: that path was resolved when the server was made, and the runtime it
+        // names can be gone, or the player can have pointed at their own Java since. Asking
+        // again is what makes both of those a fix rather than a rebuild.
+        let program = java(&server.minecraft)?;
 
         self.console
             .lock()
@@ -945,7 +979,7 @@ impl Running {
             .unwrap_or_else(|e| e.into_inner())
             .insert(server.id.clone(), Vec::new());
 
-        let mut child = Command::new(program)
+        let mut child = Command::new(&program)
             .args(args)
             .current_dir(&root)
             .stdin(Stdio::piped())
@@ -955,7 +989,7 @@ impl Running {
             // holding the port, and the next start fails with "address already in use".
             .kill_on_drop(true)
             .spawn()
-            .with_context(|| format!("starting {program}"))?;
+            .with_context(|| format!("starting {}", program.display()))?;
 
         let stdin = child.stdin.take().ok_or_else(|| anyhow!("no stdin"))?;
         let stdout = child.stdout.take().ok_or_else(|| anyhow!("no stdout"))?;
@@ -1240,6 +1274,32 @@ mod tests {
         assert_eq!(release_major(&home), None);
 
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The line `java -version` prints, from the three JVMs anyone is likely to have. The
+    /// version sits in the first pair of quotes on every one of them.
+    #[test]
+    fn a_jvm_announces_its_major_in_the_first_quoted_field() {
+        let first = |banner: &str| major_of(banner.split('"').nth(1).unwrap());
+        assert_eq!(
+            first("openjdk version \"21.0.4\" 2024-07-16\nOpenJDK Runtime Environment"),
+            Some(21)
+        );
+        assert_eq!(first("java version \"1.8.0_452\""), Some(8));
+        assert_eq!(first("openjdk version \"17.0.11\" 2024-04-16"), Some(17));
+
+        // A binary that is not a JVM says nothing of the sort, and must not read as Java 0.
+        assert_eq!("bash: no such thing".split('"').nth(1), None);
+    }
+
+    /// The floor is what a wrong-Java crash is: below it the server starts and dies on the
+    /// first class it loads, so the check has to happen before anything is spawned.
+    #[test]
+    fn the_floor_is_what_decides_whether_a_jvm_may_run_it() {
+        assert!(major_of("17.0.11").unwrap() < java_needed("1.21.1"));
+        assert!(major_of("21.0.4").unwrap() >= java_needed("1.21.1"));
+        assert!(major_of("1.8.0_452").unwrap() >= java_needed("1.16.5"));
+        assert!(major_of("1.8.0_452").unwrap() < java_needed("1.17.1"));
     }
 
     #[test]

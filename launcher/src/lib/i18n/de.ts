@@ -172,6 +172,10 @@ export default {
 	"settings.flagsAutoHint":
 		"In Auto wächst der Heap mit der Zahl der Mods; hier steht der Wert für ein Pack ohne Mods.",
 	"settings.customArgs": "Eigene Flags",
+	"settings.javaPath": "Java für eigene Server",
+	"settings.javaPathHint":
+		"Leer lassen, dann nimmt der Launcher die Laufzeit, die er zum Spielen geladen hat. Ein eigener Pfad ist die Rettung, wenn er keine passende hat: Minecraft 1.17 braucht mindestens Java 17, 1.20.5 und neuer Java 21, alles darunter Java 8. Gilt nur fürs Hosten — das Spiel bringt seine eigene Laufzeit mit.",
+	"settings.javaPathPick": "Java auswählen",
 	"settings.dataDir": "Datenverzeichnis",
 
 	/* ------------------------------------------------------------- progress. */
@@ -313,7 +317,9 @@ export default {
 	"error.stopItFirst": "Den Server erst stoppen, dann löschen.",
 	"error.portTaken": "Ein anderer Server hier benutzt diesen Port schon.",
 	"error.portTooLow": "Ports unter 1024 brauchen Administratorrechte.",
-	"error.noJava": "Kein Java gefunden. Starte einmal eine beliebige Minecraft-Version, dann lädt der Launcher eins — oder installiere ein JDK 21.",
+	"error.noJava": "Kein Java gefunden. Starte einmal eine beliebige Minecraft-Version, dann lädt der Launcher eins — oder installiere ein JDK 21 und trage es unter Einstellungen → Java ein.",
+	"error.javaTooOld": "Das gefundene Java ist zu alt für diese Minecraft-Version. Minecraft 1.17 braucht mindestens Java 17, 1.20.5 und neuer Java 21. Unter Einstellungen → Java lässt sich ein passendes eintragen.",
+	"error.javaNotRunnable": "Das unter Einstellungen → Java eingetragene Programm ließ sich nicht starten. Es muss die Datei java selbst sein — meist im Ordner bin des JDK.",
 	"error.curseforgeKeyNeeded": "Dieses CurseForge-Pack benennt seine Dateien über IDs, und dieser Build hat keinen CurseForge-Schlüssel, um sie aufzulösen.",
 	"error.notOurRelease": "Dieser Link zeigt nicht auf ein UnifiedMC-Release.",
 	"host.join": "Zu meinen Servern hinzufügen",

@@ -71,6 +71,8 @@ export interface Settings {
 	accent_cta: string;
 	/** Which set of surface tones everything is drawn on. */
 	backdrop: string;
+	/** The java binary hosted servers run on, or "" to let the launcher pick one. */
+	java_path: string;
 }
 
 export interface Session {
