@@ -5,6 +5,7 @@
 	import { Progress } from "$lib/components/ui/progress";
 	import { launcher } from "$lib/state.svelte";
 	import { t } from "$lib/i18n.svelte";
+	import { parseNotes, type Piece } from "$lib/notes";
 
 	let { open = $bindable(false) }: { open: boolean } = $props();
 
@@ -22,16 +23,12 @@
 	}
 
 	/**
-	 * The release notes as plain lines. Markdown from the release body, shown as text: a
-	 * dialog that renders somebody's markdown is a dialog that renders whatever is in it.
+	 * The release notes, parsed into blocks the markup below draws.
+	 *
+	 * Never `{@html}`: this text is written on GitHub, and the parser returns words and flags
+	 * rather than tags, so there is nothing in it that could become markup.
 	 */
-	const notes = $derived(
-		(release?.notes ?? "")
-			.split("\n")
-			.map((line) => line.replace(/^#+\s*/, "").trim())
-			.filter(Boolean)
-			.slice(0, 14)
-	);
+	const notes = $derived(parseNotes(release?.notes ?? ""));
 </script>
 
 <Dialog.Root bind:open>
@@ -48,9 +45,42 @@
 
 		<div class="max-h-[46vh] space-y-3 overflow-y-auto py-2 pr-1">
 			{#if notes.length > 0}
-				<div class="space-y-1 rounded-lg bg-muted/40 px-3.5 py-3" data-selectable>
-					{#each notes as line, i (i)}
-						<p class="text-xs leading-relaxed text-muted-foreground">{line}</p>
+				<div class="space-y-1.5 rounded-lg bg-muted/40 px-3.5 py-3" data-selectable>
+					{#each notes as block, i (i)}
+						{#snippet parts(pieces: Piece[])}
+							{#each pieces as piece, j (j)}{#if piece.code}<code
+										class="rounded bg-background/60 px-1 py-0.5 font-mono text-[0.68rem]"
+										>{piece.text}</code
+									>{:else if piece.bold}<strong class="font-semibold text-foreground/90"
+										>{piece.text}</strong
+									>{:else}{piece.text}{/if}{/each}
+						{/snippet}
+
+						{#if block.kind === "heading"}
+							<!-- Spaced above, not below: a heading belongs to what follows it. -->
+							<p class="pt-2 text-xs font-semibold text-foreground first:pt-0">
+								{@render parts(block.parts)}
+							</p>
+						{:else if block.kind === "bullet"}
+							<p class="flex gap-1.5 text-xs leading-relaxed break-words text-muted-foreground">
+								<span class="shrink-0 text-muted-foreground/50">•</span>
+								<span class="min-w-0">{@render parts(block.parts)}</span>
+							</p>
+						{:else if block.kind === "row"}
+							<!-- A table row without the table: the first cell names the thing, the
+							     rest describes it, which is every table in these notes. -->
+							<p class="flex gap-2 text-xs leading-relaxed break-words text-muted-foreground">
+								{#each block.cells as cell, c (c)}
+									<span class="{c === 0 ? 'w-16 shrink-0 text-foreground/80' : 'min-w-0 flex-1'}">
+										{@render parts(cell)}
+									</span>
+								{/each}
+							</p>
+						{:else}
+							<p class="min-w-0 text-xs leading-relaxed break-words text-muted-foreground">
+								{@render parts(block.parts)}
+							</p>
+						{/if}
 					{/each}
 				</div>
 			{/if}

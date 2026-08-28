@@ -367,7 +367,17 @@ function sample(command: string, args: Record<string, unknown>): unknown {
 				current: "0.1.7",
 				latest: "0.1.8",
 				url: "https://github.com/EJTP/UnifiedMC/releases/tag/v0.1.8",
-				notes: "Local servers, and a launcher that says when it is out of date."
+				notes: [
+					"## Run a server from the launcher",
+					"Drop in a `.mrpack` or pick a version and a loader. Java is not a prerequisite.",
+					"| | |",
+					"|---|---|",
+					"| Windows | `.msi`, or the `-setup.exe` to double-click |",
+					"| macOS | one universal `.dmg` - Intel and Apple Silicon, same file |",
+					"The macOS build is not signed, so the first open needs right-click then Open, or",
+					"`xattr -dr com.apple.quarantine /Applications/UnifiedMC.app`",
+					"https://github.com/EJTP/UnifiedMC/releases/tag/v0.1.11"
+				].join("\n")
 			};
 		case "versions":
 			return ["1.21.11", "1.21.10", "1.21.8", "1.21.1", "1.20.6", "1.20.1", "1.16.5", "1.8.9"];
