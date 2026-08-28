@@ -48,6 +48,9 @@ jobs:
       # svelte-kit sync, which the check script runs first. A clean checkout has neither.
       - run: pnpm check
         working-directory: launcher
+      # Every accent carries white text; this refuses a palette that cannot hold it.
+      - run: node scripts/check-contrast.mjs
+        working-directory: launcher
       - run: cargo fmt --check
         working-directory: launcher/src-tauri
       - run: cargo clippy -- -D warnings

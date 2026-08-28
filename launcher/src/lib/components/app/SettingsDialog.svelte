@@ -9,7 +9,15 @@
 	import { call } from "$lib/bridge";
 	import { launcher } from "$lib/state.svelte";
 	import { t, LOCALES } from "$lib/i18n.svelte";
-	import { ACCENTS, applyAccent } from "$lib/theme";
+	import {
+		ACCENTS,
+		BACKDROPS,
+		CUSTOM,
+		READABLE,
+		applyTheme,
+		pairOf,
+		whiteContrast
+	} from "$lib/theme";
 	import type { Settings } from "$lib/types";
 
 	let { open = $bindable(false) }: { open: boolean } = $props();
@@ -32,8 +40,29 @@
 	 * picking a colour. Cancelling puts the saved one back.
 	 */
 	$effect(() => {
-		applyAccent(open ? draft.accent : launcher.settings.accent);
+		applyTheme(open ? draft : launcher.settings);
 	});
+
+	/** What the two swatches are showing, preset or custom. */
+	const pair = $derived(pairOf(draft));
+
+	/**
+	 * White sits on both accents, so a colour picked too light makes its own label disappear.
+	 * Said rather than refused - it is the player's window - but said plainly.
+	 */
+	const faint = $derived(
+		[
+			{ what: t("accent.custom.primary"), ratio: whiteContrast(pair.primary) },
+			{ what: t("accent.custom.action"), ratio: whiteContrast(pair.cta) }
+		].filter((c) => c.ratio < READABLE)
+	);
+
+	/** Picking a colour switches to custom, keeping whatever was already there. */
+	function custom(which: "primary" | "cta", value: string) {
+		if (which === "primary") draft.accent_primary = value;
+		else draft.accent_cta = value;
+		draft.accent = CUSTOM;
+	}
 
 	$effect(() => {
 		if (!open) return;
@@ -186,8 +215,67 @@
 								style="background: linear-gradient(135deg, {accent.primary} 0 50%, {accent.cta} 50% 100%)"
 							></button>
 						{/each}
+
+						<!--
+							The two native pickers are the custom option: choosing a colour in one is
+							what selects it, so there is no separate "custom" button to press first.
+						-->
+						<label
+							class="flex items-center gap-1 rounded-full px-1.5 outline-none
+							       {draft.accent === CUSTOM
+								? 'ring-2 ring-foreground/80 ring-offset-2 ring-offset-popover'
+								: ''}"
+							title={t("accent.custom.title")}
+						>
+							<input
+								type="color"
+								value={pair.primary}
+								oninput={(e) => custom("primary", e.currentTarget.value)}
+								aria-label={t("accent.custom.primary")}
+								class="size-7 cursor-pointer rounded-full border-0 bg-transparent p-0
+								       [&::-webkit-color-swatch-wrapper]:p-0
+								       [&::-webkit-color-swatch]:rounded-full [&::-webkit-color-swatch]:border-0"
+							/>
+							<input
+								type="color"
+								value={pair.cta}
+								oninput={(e) => custom("cta", e.currentTarget.value)}
+								aria-label={t("accent.custom.action")}
+								class="size-7 cursor-pointer rounded-full border-0 bg-transparent p-0
+								       [&::-webkit-color-swatch-wrapper]:p-0
+								       [&::-webkit-color-swatch]:rounded-full [&::-webkit-color-swatch]:border-0"
+							/>
+						</label>
 					</div>
 					<p class="text-xs text-muted-foreground">{t("accent.hint")}</p>
+
+					{#if faint.length > 0}
+						<p class="text-xs text-warn">
+							{t("accent.faint", { what: faint.map((c) => c.what).join(", ") })}
+						</p>
+					{/if}
+				</div>
+
+				<div class="space-y-2">
+					<span class="block text-sm font-medium">{t("backdrop.title")}</span>
+					<div class="flex flex-wrap gap-2" role="radiogroup" aria-label={t("backdrop.title")}>
+						{#each BACKDROPS as surface (surface.id)}
+							{@const picked = draft.backdrop === surface.id}
+							<button
+								type="button"
+								role="radio"
+								aria-checked={picked}
+								aria-label={t(surface.key)}
+								title={t(surface.key)}
+								onclick={() => (draft.backdrop = surface.id)}
+								class="size-8 rounded-lg border border-border/70 outline-none transition-transform
+								       hover:scale-110 focus-visible:ring-3 focus-visible:ring-ring/50
+								       {picked ? 'ring-2 ring-foreground/80 ring-offset-2 ring-offset-popover' : ''}"
+								style="background: linear-gradient(160deg, {surface.card} 0 55%, {surface.background} 55% 100%)"
+							></button>
+						{/each}
+					</div>
+					<p class="text-xs text-muted-foreground">{t("backdrop.hint")}</p>
 				</div>
 
 				<div class="flex items-start justify-between gap-4">

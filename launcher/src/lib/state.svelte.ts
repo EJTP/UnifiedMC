@@ -11,7 +11,7 @@ import {
 	relaunch
 } from "./bridge";
 import { locale, resolveLocale, t, translate } from "./i18n.svelte";
-import { applyAccent } from "./theme";
+import { applyTheme } from "./theme";
 import type {
 	ConsoleLine,
 	Hit,
@@ -80,7 +80,10 @@ class LauncherState {
 		keep_open: true,
 		jvm_profile: "balanced",
 		jvm_args: "",
-		accent: "violet"
+		accent: "violet",
+		accent_primary: "#7c3aed",
+		accent_cta: "#f43f5e",
+		backdrop: "midnight"
 	});
 	session = $state<Session | null>(null);
 	progress = $state<Progress | null>(null);
@@ -856,10 +859,10 @@ class LauncherState {
 		this.applyLanguage();
 	}
 
-	/** Put the chosen language and accent into effect. Every screen reads both through them. */
+	/** Put the chosen language and theme into effect. Every screen reads both through them. */
 	applyLanguage() {
 		locale.current = resolveLocale(this.settings.language ?? "system");
-		applyAccent(this.settings.accent ?? "violet");
+		applyTheme(this.settings);
 	}
 }
 

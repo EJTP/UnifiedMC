@@ -39,8 +39,9 @@
   --input: #262640;
   --ring: #7c3aed;
 
-  /* The single rose action colour. One per screen, or it stops meaning anything. */
-  --cta: #f43f5e;
+  /* The single rose action colour. One per screen, or it stops meaning anything. A 600 step
+     rather than a 500: its label is white, and a brighter rose cannot hold one. */
+  --cta: #e11d48;
   --cta-foreground: #ffffff;
 
   /* Server and job states, shared with the progress bar */
@@ -51,7 +52,7 @@
   /* The two hues everything ambient is mixed from. Named so a card, a glow and the
      background cannot drift apart when one of them is retuned. */
   --hue-a: #7c3aed;
-  --hue-b: #f43f5e;
+  --hue-b: #e11d48;
 
   /* A card is a gradient, not a flat fill: two stops one step apart is enough to give an
      edge a direction, which is what makes a flat dark interface stop looking printed. */

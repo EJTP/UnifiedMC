@@ -64,8 +64,13 @@ export interface Settings {
 	keep_open: boolean;
 	jvm_profile: string;
 	jvm_args: string;
-	/** Which accent the window is painted in. See `theme.ts` for the names. */
+	/** Which accent the window is painted in, or "custom". See `theme.ts` for the names. */
 	accent: string;
+	/** The custom pair, kept even while a preset is chosen. */
+	accent_primary: string;
+	accent_cta: string;
+	/** Which set of surface tones everything is drawn on. */
+	backdrop: string;
 }
 
 export interface Session {

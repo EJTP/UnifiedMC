@@ -21,9 +21,16 @@ pub struct Settings {
     pub jvm_args: String,
     /// "system", "de" or "en". "system" follows the browser locale the webview reports.
     pub language: String,
-    /// Which accent the window is painted in. The names live in the frontend, which is the
-    /// only thing that has any use for them; this only has to remember the choice.
+    /// Which accent the window is painted in, or "custom" to use the two colours below. The
+    /// names live in the frontend, which is the only thing with any use for them; this only
+    /// has to remember the choice.
     pub accent: String,
+    /// The custom pair, as `#rrggbb`. Only read when `accent` is "custom", but kept either
+    /// way so switching to a preset and back does not lose what was picked.
+    pub accent_primary: String,
+    pub accent_cta: String,
+    /// Which set of surface tones the window is built out of.
+    pub backdrop: String,
 }
 
 impl Default for Settings {
@@ -36,6 +43,9 @@ impl Default for Settings {
             jvm_args: String::new(),
             language: "system".into(),
             accent: "violet".into(),
+            accent_primary: "#7c3aed".into(),
+            accent_cta: "#f43f5e".into(),
+            backdrop: "midnight".into(),
         }
     }
 }

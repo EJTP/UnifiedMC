@@ -147,7 +147,8 @@ function sample(command: string, args: Record<string, unknown>): unknown {
 				],
 				settings: {
 					language: "system", memory: 0, offline_name: "Player",
-					keep_open: true, jvm_profile: "balanced", jvm_args: "", accent: "violet"
+					keep_open: true, jvm_profile: "balanced", jvm_args: "", accent: "violet",
+					accent_primary: "#7c3aed", accent_cta: "#f43f5e", backdrop: "midnight"
 				},
 				session: { name: "EJTP", uuid: "0", kind: "microsoft" },
 				unknown_server_icon: null
