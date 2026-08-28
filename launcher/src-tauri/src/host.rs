@@ -261,7 +261,8 @@ pub async fn provide_java(
     };
     // A path the player typed is theirs to be wrong about. Quietly downloading a second JVM
     // and running on that would leave the setting doing nothing, with no way to tell.
-    if !crate::settings::Settings::load().java_path.trim().is_empty() {
+    let chosen = crate::settings::Settings::load().java_path;
+    if !chosen.trim().is_empty() {
         return Err(error);
     }
     download_java(client, java_needed(minecraft), say).await
@@ -341,7 +342,9 @@ async fn download_java(client: &reqwest::Client, needed: u32, say: Say<'_>) -> R
     // leaves the staging directory behind, and the next one starts by clearing it.
     let runtimes = crate::paths::minecraft().join("runtimes");
     let home = runtimes.join(component);
-    let staging = crate::paths::minecraft().join("java-download").join(component);
+    let staging = crate::paths::minecraft()
+        .join("java-download")
+        .join(component);
     let _ = std::fs::remove_dir_all(&staging);
 
     let mut wanted = Vec::new();
@@ -355,7 +358,11 @@ async fn download_java(client: &reqwest::Client, needed: u32, say: Say<'_>) -> R
             "link" => links.push((path, file.target.clone().unwrap_or_default())),
             _ => {
                 if let Some(downloads) = &file.downloads {
-                    wanted.push((path, downloads.raw.url.clone(), file.executable == Some(true)));
+                    wanted.push((
+                        path,
+                        downloads.raw.url.clone(),
+                        file.executable == Some(true),
+                    ));
                 }
             }
         }
