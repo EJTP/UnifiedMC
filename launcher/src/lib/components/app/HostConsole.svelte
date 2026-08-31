@@ -114,7 +114,7 @@
 			{#each launcher.consoleLines as text, i (i)}
 				<div class="break-words whitespace-pre-wrap {tone(text)}">{text}</div>
 			{:else}
-				<p class="text-muted-foreground/60">
+				<p class="text-muted-foreground-dim">
 					{server.running ? t("host.consoleQuiet") : t("host.consoleStopped")}
 				</p>
 			{/each}

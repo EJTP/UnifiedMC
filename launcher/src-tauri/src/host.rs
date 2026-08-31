@@ -19,7 +19,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 
 use crate::pack::{self, Side};
-use crate::sync::plain_relative;
+use crate::sync::{cancelled, plain_relative};
 
 /// Where the publisher mod is published. The launcher and the server mod are versioned
 /// separately, so this follows whatever the server repository last released.
@@ -681,6 +681,9 @@ async fn write_pack(
     let total = pack.files.len();
 
     for file in &pack.files {
+        // Safe to stop anywhere here: `create` takes the whole directory with it on any error,
+        // so a cancelled import leaves no half-built server behind.
+        cancelled()?;
         // A pack is a zip somebody else wrote, and every member name is attacker text.
         if !plain_relative(&file.path) || pack::is_private(&file.path) {
             continue;

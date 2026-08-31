@@ -44,7 +44,7 @@
 	<span aria-hidden="true" class="absolute inset-y-0 left-0 w-[3px] bg-border/60"></span>
 
 	<div class="flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted/70">
-		<Boxes class="size-5 text-muted-foreground/50" />
+		<Boxes class="size-5 text-muted-foreground-dim" />
 	</div>
 
 	<div class="min-w-0 flex-1">
@@ -55,10 +55,10 @@
 			{/each}
 
 			{#if played && played.seconds > 0}
-				<span class="flex shrink-0 items-center gap-1 text-[0.7rem] text-muted-foreground/70">
+				<span class="flex shrink-0 items-center gap-1 text-[0.7rem] text-muted-foreground-dim">
 					<Clock class="size-2.5" />
 					{spell(played.seconds)}
-					<span class="text-muted-foreground/40">·</span>
+					<span class="text-muted-foreground-dim">·</span>
 					{ago(played.last)}
 				</span>
 			{/if}

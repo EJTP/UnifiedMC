@@ -82,7 +82,7 @@
 				<item.icon class="size-4 shrink-0" />
 				<span class="flex-1 truncate text-left">{t(item.key)}</span>
 				{#if item.count() > 0}
-					<span class="shrink-0 font-mono text-xs text-muted-foreground/70">{item.count()}</span>
+					<span class="shrink-0 font-mono text-xs text-muted-foreground-dim">{item.count()}</span>
 				{/if}
 			</button>
 		{/each}
@@ -129,7 +129,7 @@
 		<div class="px-2 pb-3">
 			<div class="rounded-lg bg-card/50 px-2.5 py-2">
 				<div class="flex items-baseline justify-between gap-2">
-					<span class="text-[0.7rem] tracking-wide text-muted-foreground/70 uppercase">
+					<span class="text-[0.7rem] tracking-wide text-muted-foreground-dim uppercase">
 						{t("played.title")}
 					</span>
 					<!-- Text wears text tokens; the bars beside it carry the colour. -->
@@ -138,7 +138,7 @@
 				<div class="mt-1.5">
 					<Sparkline days={everyDay} today={launcher.today} span={SPAN} height={26} />
 				</div>
-				<p class="mt-1 text-[0.65rem] text-muted-foreground/50">{t("played.fortnight")}</p>
+				<p class="mt-1 text-[0.65rem] text-muted-foreground-dim">{t("played.fortnight")}</p>
 			</div>
 		</div>
 	{/if}
@@ -172,10 +172,11 @@
 				</span>
 			</button>
 
+			<!-- The gear keeps its size; the button gets one, so the target matches the face beside it. -->
 			<button
 				type="button"
 				onclick={onsettings}
-				class="shrink-0 rounded-md text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+				class="flex size-8 items-center justify-center shrink-0 rounded-md text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
 				aria-label={t("nav.settings")}
 				title={t("nav.settings")}
 			>

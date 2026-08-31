@@ -24,7 +24,10 @@
   --secondary-foreground: #e2e8f0;
 
   --muted: #22223a;
-  --muted-foreground: #8b8ba7;
+  /* Two hex tiers rather than opacity steps on one: /70 measured 3.25:1 on a card, and every
+     step below 90% failed the same way. A hex is also something check-contrast.mjs can read. */
+  --muted-foreground: #a3a3bd;
+  --muted-foreground-dim: #9797b2;
 
   /* shadcn's "accent" is a hover surface, not a call to action - see --cta */
   --accent: #2a2a44;
@@ -37,7 +40,10 @@
      exhausting on every card. Violet is kept for focus and selection. */
   --border: #262640;
   --input: #262640;
-  --ring: #7c3aed;
+  /* Lightened off the accent rather than equal to it: at full strength the presets measure
+     2.4-3.6:1 on these backdrops and a focus ring owes 3:1. Mixed here rather than computed in
+     applyTheme(), so a custom accent gets the same treatment without a second code path. */
+  --ring: color-mix(in oklab, var(--primary) 65%, white);
 
   /* The single rose action colour. One per screen, or it stops meaning anything. A 600 step
      rather than a 500: its label is white, and a brighter rose cannot hold one. */
@@ -77,6 +83,7 @@
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
+  --color-muted-foreground-dim: var(--muted-foreground-dim);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
@@ -103,8 +110,9 @@
 }
 
 @layer base {
+  /* Full strength, not /50: an outline is a focus indicator, and owes the same 3:1. */
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border outline-ring;
   }
 
   html {
@@ -185,6 +193,27 @@
   }
 }
 
+/*
+  The focus ring at full strength, from outside the layers.
+
+  Twenty-two `ring-ring/50` classes across fifteen files, and half the accent over a dark card
+  measures 2.0-2.6:1 - under the 3:1 a focus indicator owes. Editing twenty-two is twenty-two
+  chances to miss one; an unlayered rule outranks the whole utility layer at once.
+
+  The guard matches `focus-visible:ring-destructive`, not bare `ring-destructive`: every shadcn
+  primitive carries `aria-invalid:ring-destructive/*` in its always-present base string, so the
+  bare substring excluded every button, input, select, switch and badge in the app whether or
+  not it was invalid. Only the destructive VARIANTS of button and badge declare a destructive
+  ring on focus, and only those want their own colour. Invalid controls are still caught by
+  [aria-invalid="true"], which is live state rather than a declared variant.
+*/
+:is(:focus-visible, :focus-within):not(
+  [aria-invalid="true"],
+  [class*="focus-visible:ring-destructive"]
+) {
+  --tw-ring-color: var(--ring);
+}
+
 @layer components {
   /*
     One card, everywhere. Servers, instances and hosted servers are three lists of the same
@@ -196,13 +225,22 @@
   */
   .surface {
     @apply relative overflow-hidden rounded-xl border border-border/70;
-    background: linear-gradient(to bottom, var(--surface-top), var(--surface-bottom));
+    background: linear-gradient(
+      to bottom,
+      var(--surface-top),
+      var(--surface-bottom)
+    );
   }
 
   .surface::before {
     content: "";
     @apply pointer-events-none absolute inset-x-0 top-0 h-px;
-    background: linear-gradient(to right, transparent, var(--surface-edge), transparent);
+    background: linear-gradient(
+      to right,
+      transparent,
+      var(--surface-edge),
+      transparent
+    );
   }
 
   /* Hover is a lift and a warmer edge, not a different colour: the list must not flash. */

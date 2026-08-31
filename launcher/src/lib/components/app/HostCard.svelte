@@ -62,7 +62,7 @@
 		<div
 			class="relative flex size-11 shrink-0 items-center justify-center rounded-lg bg-muted/70"
 		>
-			<Server class="size-5 text-muted-foreground/60" />
+			<Server class="size-5 text-muted-foreground-dim" />
 			{#if server.running}
 				<!-- A running server has a heartbeat; a stopped one is a plain box. -->
 				<span class="absolute -top-1 -right-1 flex size-3">
@@ -117,7 +117,7 @@
 				onclick={copy}
 				title={t("host.copy")}
 				class="mt-1.5 -ml-1 flex items-center gap-1.5 rounded px-1 py-0.5 font-mono text-xs
-				       text-muted-foreground/80 outline-none transition-colors hover:bg-accent/40
+				       text-muted-foreground-dim outline-none transition-colors hover:bg-accent/40
 				       hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
 			>
 				{server.address}

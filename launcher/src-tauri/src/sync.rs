@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{anyhow, Context, Result};
 use futures::stream::{self, StreamExt};
@@ -12,6 +13,30 @@ use crate::paths;
 use crate::servers::{ConfigEntry, ModEntry};
 
 const PARALLEL_DOWNLOADS: usize = 8;
+
+/// Set by the `cancel` command, cleared when a job starts, read at the boundary between two
+/// files. Never inside a request: what a dropped request leaves behind is nothing, what a
+/// dropped write leaves behind is a file nothing will ever look at twice.
+///
+/// A static rather than a field threaded through eight signatures - the window puts one overlay
+/// over one job, so there is one thing to cancel.
+/// ponytail: one flag for the whole process, a job id if two ever run at once.
+static CANCEL: AtomicBool = AtomicBool::new(false);
+
+pub fn arm() {
+    CANCEL.store(false, Ordering::Relaxed);
+}
+
+pub fn cancel() {
+    CANCEL.store(true, Ordering::Relaxed);
+}
+
+pub fn cancelled() -> Result<()> {
+    if CANCEL.load(Ordering::Relaxed) {
+        return Err(anyhow!("error.cancelled"));
+    }
+    Ok(())
+}
 
 /// Every string in a manifest is written by whoever answered on that port, and `Path::join`
 /// reads "../.." as a direction. These three say what a manifest may name, and everything that
@@ -170,6 +195,9 @@ where
     .buffer_unordered(PARALLEL_DOWNLOADS);
 
     while let Some((name, outcome)) = running.next().await {
+        // Before the outcome, so a cancel is reported as one rather than as whatever the eight
+        // requests going down with the stream happened to fail with.
+        cancelled()?;
         outcome.with_context(|| format!("downloading {name}"))?;
         done += 1;
         progress(done, count, &name);
@@ -298,6 +326,7 @@ pub async fn config(
     let (mut written, mut kept) = (0usize, 0usize);
 
     for entry in entries {
+        cancelled()?;
         if !plain_relative(&entry.path) {
             continue; // the server names paths on our disk; that is a boundary, not a hint
         }

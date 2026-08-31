@@ -227,6 +227,11 @@ pub async fn run(
     })
     .custom_args(quick_play(join.as_deref()));
 
+    // Between phases, never inside lyceris: it decides a file is present by its name alone (see
+    // below), so an install dropped halfway leaves a truncated jar that every later run skips.
+    // The cost is that a cancel asked for during the Java download only lands when it finishes.
+    sync::cancelled()?;
+
     // ponytail: lyceris uses each sha1 only to decide whether to fetch, never to check what
     // arrived, so a file downloaded in a run is on the classpath unverified. Everything is https,
     // so the attacker has to be the upstream host. Fixing it means a patched lyceris.
@@ -234,12 +239,14 @@ pub async fn run(
         Some(loader) => {
             let config = builder.loader(loader).build();
             install(&config, Some(&emitter)).await?;
+            sync::cancelled()?;
             report(&app, "progress.launch", &manifest.minecraft, 0, 0);
             launch(&config, Some(&emitter)).await?
         }
         None => {
             let config = builder.build();
             install(&config, Some(&emitter)).await?;
+            sync::cancelled()?;
             report(&app, "progress.launch", &manifest.minecraft, 0, 0);
             launch(&config, Some(&emitter)).await?
         }

@@ -29,6 +29,15 @@
 	/** The server whose setup is open, if one is. */
 	let setup = $state<SavedServer | null>(null);
 
+	/**
+	 * The header's filter box, when the header is showing one. Typed as the element the shadcn
+	 * Input binds back - HTMLElement, not HTMLInputElement - so the shortcut narrows it instead.
+	 */
+	let filterBox = $state<HTMLElement | null>(null);
+
+	/** What to call the modifier in the tooltip. Nothing else in the window asks which platform. */
+	const modKey = $derived(navigator.userAgent.includes("Mac") ? "⌘" : t("common.ctrlKey"));
+
 	// onMount, not $effect: start() writes the same state it reads, and an effect that tracks
 	// its own writes re-runs itself for as long as the window is open.
 	onMount(() => {
@@ -94,6 +103,38 @@
 				: t("host.addAction")
 	);
 
+	/**
+	 * The window is drawn without decorations, so there is no menu bar to hang these on and the
+	 * window itself has to listen. An open dialog is looked for in the DOM rather than through the
+	 * flags above: bits-ui portals every one of them to the same slot, so a dialog cannot forget to
+	 * declare itself here - and Escape stays bits-ui's to handle while one is up. A progress
+	 * overlay is not a dialog but covers the same ground, and the header it hides must not be
+	 * reachable by keyboard while the mouse cannot get at it.
+	 */
+	function shortcut(event: KeyboardEvent) {
+		if (launcher.progress || launcher.closing) return;
+		if (document.querySelector('[data-slot="dialog-content"]')) return;
+		// Cmd on macOS, Ctrl everywhere else; no chord in the app wants to tell the two apart.
+		const held = event.metaKey || event.ctrlKey;
+		if (held && event.key.toLowerCase() === "f" && filterBox instanceof HTMLInputElement) {
+			// select, not focus: a second press is somebody about to replace what they typed.
+			event.preventDefault();
+			filterBox.select();
+		} else if (held && event.key === ",") {
+			event.preventDefault();
+			settingsOpen = true;
+		} else if (event.key === "Escape" && launcher.filter) {
+			// Not conditional on the box existing: the list can drop below four rows while a filter
+			// is still typed, which unmounts both the box and the button and leaves this the only
+			// way back to the whole list.
+			// Escape typed into another box belongs to that box - the console's command line is
+			// right under the hosting list, and the filter is not what it means to empty.
+			const active = document.activeElement;
+			if (active !== filterBox && active instanceof HTMLInputElement) return;
+			launcher.filter = "";
+		}
+	}
+
 	function add() {
 		if (view === "servers") {
 			addingServer = true;
@@ -114,6 +155,8 @@
 		setup = server;
 	}
 </script>
+
+<svelte:window onkeydown={shortcut} />
 
 <!-- The system decorations are off, so the window's top edge is ours to draw and to drag. -->
 <div class="ambient flex h-full flex-col">
@@ -146,10 +189,13 @@
 								<Search
 									class="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground"
 								/>
+								<!-- The tooltip carries the shortcut, since there is no menu to read it off. -->
 								<Input
+									bind:ref={filterBox}
 									bind:value={launcher.filter}
 									placeholder={t("common.filter")}
 									aria-label={t("common.filter")}
+									title={t("common.filterHint", { key: modKey })}
 									class="h-8 pl-8 text-xs"
 								/>
 							</div>
@@ -286,7 +332,7 @@
 										<p class="text-sm text-muted-foreground">
 											{view === "servers" ? t("servers.empty.title") : t("instances.empty.title")}
 										</p>
-										<p class="mx-auto mt-1.5 max-w-md text-xs text-muted-foreground/70">
+										<p class="mx-auto mt-1.5 max-w-md text-xs text-muted-foreground-dim">
 											{view === "servers" ? t("servers.empty.hint") : t("instances.empty.hint")}
 										</p>
 									{/if}
@@ -307,7 +353,7 @@
 				job={{ phase: t("host.closing"), detail: "", done: 0, total: 0 }}
 			/>
 		{:else if launcher.progress}
-			<ProgressOverlay job={launcher.progress} />
+			<ProgressOverlay job={launcher.progress} oncancel={() => launcher.cancel()} />
 		{/if}
 
 		<SettingsDialog bind:open={settingsOpen} />

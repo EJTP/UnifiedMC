@@ -256,6 +256,7 @@ fn remove_instance(id: String) -> Result<Vec<instances::Instance>, String> {
 /// Start an instance: into Minecraft's own menu, where the player picks a world.
 #[tauri::command]
 async fn play_instance(app: AppHandle, state: State<'_, App>, id: String) -> Result<(), String> {
+    sync::arm();
     let settings = Settings::load();
     let session = session::current(&state.client, &settings.offline_name).await;
 
@@ -614,6 +615,9 @@ async fn play(
     // an instance to join with instead of the server's own setup: the player's mods come along
     instance: Option<String>,
 ) -> Result<(), String> {
+    // Armed at the start of every job that can put the overlay up, so a cancel nobody reached
+    // last time cannot kill this one before it begins.
+    sync::arm();
     let client = state.client.clone();
     let settings = Settings::load();
     let session = session::current(&state.client, &settings.offline_name).await;
@@ -797,6 +801,9 @@ async fn install_mods(
     kind: Kind,
     ids: Vec<String>,
 ) -> Result<Vec<String>, String> {
+    // No overlay and so no cancel button, but it downloads through the same loop: armed so a
+    // cancel from the launch before cannot land on it.
+    sync::arm();
     let client = state.client.clone();
     let (manifest, key) = served(&state, &address).await?;
 
@@ -1046,6 +1053,7 @@ async fn create_host(
     publish: bool,
     pack: Option<String>,
 ) -> Result<Vec<HostView>, String> {
+    sync::arm();
     // Said before anything is downloaded: a server directory that cannot legally start is a
     // waste of the next four hundred megabytes.
     if !eula {
@@ -1207,6 +1215,16 @@ fn open_release(app: AppHandle, url: String) -> Result<(), String> {
     update::open(&app, &url).map_err(failed)
 }
 
+/// Stop whatever the overlay is standing over.
+///
+/// Takes effect at the next file, not mid-download: the blob store is content-addressed and a
+/// half-finished fetch writes nothing, so what is on disk when this lands is a smaller version
+/// of what was there before, never a broken one.
+#[tauri::command]
+fn cancel() {
+    sync::cancel();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1295,7 +1313,8 @@ pub fn run() {
             open_release,
             playtime,
             today,
-            open_catalogue_page
+            open_catalogue_page,
+            cancel
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

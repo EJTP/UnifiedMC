@@ -1,9 +1,15 @@
 <script lang="ts">
+	import { Button } from "$lib/components/ui/button";
 	import { Progress } from "$lib/components/ui/progress";
-	import { translate } from "$lib/i18n.svelte";
+	import { t, translate } from "$lib/i18n.svelte";
 	import type { Progress as Job } from "$lib/types";
 
-	let { job }: { job: Job } = $props();
+	// No handler means there is nothing to stop - the shutdown overlay waits on worlds saving.
+	let { job, oncancel }: { job: Job; oncancel?: () => void } = $props();
+
+	// Local, not on the launcher: the overlay lives exactly as long as the job does, so this
+	// resets itself and no field has to be cleared anywhere.
+	let asked = $state(false);
 
 	const fraction = $derived(job.total > 0 ? (job.done / job.total) * 100 : null);
 
@@ -41,5 +47,25 @@
 				<span class="shrink-0 font-mono">{job.done} / {job.total}</span>
 			{/if}
 		</div>
+
+		{#if oncancel}
+			<!--
+				The label changes rather than the button going away: the stop lands at the next file,
+				and a button that vanished would read as "already stopped" while bytes still arrive.
+			-->
+			<div class="mt-4 flex justify-center">
+				<Button
+					variant="ghost"
+					size="sm"
+					disabled={asked}
+					onclick={() => {
+						asked = true;
+						oncancel?.();
+					}}
+				>
+					{asked ? t("progress.cancelling") : t("common.cancel")}
+				</Button>
+			</div>
+		{/if}
 	</div>
 </div>

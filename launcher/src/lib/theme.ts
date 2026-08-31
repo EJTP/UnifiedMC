@@ -178,7 +178,8 @@ export function applyTheme(theme: {
 	const surface = backdropOf(theme.backdrop);
 
 	root.setProperty("--primary", primary);
-	root.setProperty("--ring", primary);
+	// No --ring: app.css mixes it up off --primary to clear the focus-ring contrast threshold,
+	// and setting it inline here would overrule that with the unlightened accent.
 	root.setProperty("--hue-a", primary);
 	root.setProperty("--cta", cta);
 	root.setProperty("--hue-b", cta);

@@ -101,7 +101,12 @@
 					: 'bg-border'}"
 	></span>
 
-	<StatusDot {state} class="sr-only" />
+	<!--
+		Visible rather than sr-only: the stripe carries the state in colour and nothing else, and
+		the glyph is what an eye that cannot split the green from the red actually reads. Same slot,
+		same size, every state - a ready row and an unreachable one keep one geometry.
+	-->
+	<StatusDot {state} />
 
 	<!-- The server's own icon if it has one; a placeholder keeps the row aligned if not. -->
 	<!-- square, not rounded: server icons are pixel art and their own corners are the point -->
@@ -119,7 +124,7 @@
 				class="size-full object-cover [image-rendering:pixelated]"
 			/>
 		{:else}
-			<Server class="size-4 text-muted-foreground/50" />
+			<Server class="size-4 text-muted-foreground-dim" />
 		{/if}
 	</div>
 
@@ -139,7 +144,7 @@
 			play buttons of the list stop sitting on a single line.
 		-->
 		<div class="flex min-h-4 items-center gap-2">
-			<div class="min-w-0 flex-1 text-xs text-muted-foreground/90">
+			<div class="min-w-0 flex-1 text-xs text-muted-foreground">
 				{#if status?.motd?.length}
 					<Motd spans={status.motd} />
 				{/if}
@@ -147,7 +152,7 @@
 			{#if !singleplayer}
 				<!-- capped, not just shrink-0: a 200-character hostname may not push the row wider -->
 				<span
-					class="max-w-[55%] shrink-0 truncate font-mono text-xs text-muted-foreground/60"
+					class="max-w-[55%] shrink-0 truncate font-mono text-xs text-muted-foreground-dim"
 					title={server.address}
 				>
 					{server.address}
@@ -170,10 +175,10 @@
 				the server, so it reads as a note on the end rather than another property of it.
 			-->
 			{#if played && played.seconds > 0}
-				<span class="flex shrink-0 items-center gap-1 text-[0.7rem] text-muted-foreground/70">
+				<span class="flex shrink-0 items-center gap-1 text-[0.7rem] text-muted-foreground-dim">
 					<Clock class="size-2.5" />
 					{spell(played.seconds)}
-					<span class="text-muted-foreground/40">·</span>
+					<span class="text-muted-foreground-dim">·</span>
 					{ago(played.last)}
 				</span>
 			{/if}

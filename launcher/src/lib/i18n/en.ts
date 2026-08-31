@@ -8,6 +8,7 @@ export default {
 	"common.add": "Add",
 	"common.create": "Create",
 	"common.remove": "Remove",
+	"common.delete": "Delete",
 	"common.playing": "Playing",
 	"common.play": "Play",
 	"common.starting": "Starting",
@@ -66,6 +67,8 @@ export default {
 	"instances.noMods": "no mods",
 	"instances.name": "Name",
 	"instances.action.remove": "Remove {name}",
+	"instances.removeConfirm":
+		"“{name}” will be removed from the launcher. Its files stay on the disk — worlds, mods and settings are not deleted.",
 	"instances.action.mods": "Mods for {name}",
 	"instances.loading": "Loading instances …",
 
@@ -189,6 +192,7 @@ export default {
 	"progress.java": "Preparing Java",
 	"progress.download": "Downloading files",
 	"progress.launch": "Minecraft is starting",
+	"progress.cancelling": "Stopping after this file",
 
 	/* --------------------------------------------------------------- window. */
 	"window.minimise": "Minimise",
@@ -201,6 +205,7 @@ export default {
 	"error.serverClosedConnection": "The server closed the connection without answering. Big networks throttle status pings — wait a moment and check again.",
 	"error.alreadyOnAServer": "You are already on a server. One account can only be on one server at a time — singleplayer alongside is fine.",
 	"error.accessDeniedHint": "Minecraft is probably still running and holding the file. Close the game and try again. Otherwise: a read-only folder, or an antivirus in the way.",
+	"error.cancelled": "Stopped.",
 	"error.noManifest": "The server publishes no manifest.",
 	"error.noSuchServer": "That server is gone.",
 	"error.noSuchInstance": "That instance is gone.",
@@ -242,6 +247,8 @@ export default {
 
 	/* -------------------- hosting, updates, and the filter box. */
 	"common.filter": "Filter",
+	"common.filterHint": "Filter ({key}+F)",
+	"common.ctrlKey": "Ctrl",
 	"common.noMatches": "Nothing matches “{query}”",
 	"common.clearFilter": "Clear the filter",
 	"nav.hosting": "Hosting",
@@ -288,6 +295,8 @@ export default {
 	"host.content": "Add mods and packs",
 	"host.openFolder": "Open the folder",
 	"host.remove": "Delete this server",
+	"host.removeConfirm":
+		"“{name}” and every file of this server will be deleted from the disk — world, mods and configuration. This cannot be undone.",
 	"host.copy": "Copy the address",
 	"host.copied": "copied",
 	"host.action.remove": "Delete {name}",

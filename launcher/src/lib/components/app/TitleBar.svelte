@@ -54,13 +54,18 @@
 			<ArrowUpCircle class="size-3.5 text-primary" />
 			{t("update.available", { version: launcher.release.latest })}
 		</button>
+		<!--
+			A box around the mark, not a mark to aim at: the glyph stays size-3, the target is the
+			same height as the pill it dismisses rather than the 14px the cross alone would be.
+		-->
 		<button
 			type="button"
 			onclick={() => (launcher.updateDismissed = true)}
 			aria-label={t("update.dismiss")}
 			title={t("update.dismiss")}
-			class="mr-2 rounded text-muted-foreground/60 outline-none transition-colors
-			       hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+			class="mr-2 flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground-dim
+			       outline-none transition-colors hover:text-foreground focus-visible:ring-3
+			       focus-visible:ring-ring/50"
 		>
 			<X class="size-3" />
 		</button>

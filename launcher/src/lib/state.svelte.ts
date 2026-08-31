@@ -1,5 +1,6 @@
 import {
 	call,
+	confirmDelete,
 	downloadAndInstall,
 	onClosing,
 	onConsole,
@@ -96,6 +97,15 @@ class LauncherState {
 	skinTexture = $state<string | null>(null);
 	/** The one launch being prepared. Serial: two at once fight over the same blob store. */
 	playing = $state<string | null>(null);
+	/** A stop has been asked for. Kept because the job comes back as a failure and is not one. */
+	cancelling = $state(false);
+
+	/** Ask the running job to stop. It ends at the next file, not in the middle of one. */
+	async cancel() {
+		if (this.cancelling) return;
+		this.cancelling = true;
+		await call("cancel");
+	}
 
 		/** The one launch being prepared. Serial: two at once fight over the same blob store. */
 	running = $state<Record<string, "server" | "instance">>({});
@@ -253,6 +263,9 @@ class LauncherState {
 		if (this.busyHosting) return false;
 		this.busyHosting = true;
 		this.error = null;
+		// A cancel clicked after the last checkpoint has nowhere to land, so the flag can outlive the
+		// job that set it. Left standing it deadens this job's cancel button and hides its errors.
+		this.cancelling = false;
 		// The same overlay a launch uses: importing a pack is the same four hundred megabytes.
 		this.progress = { phase: t("host.building"), detail: spec.name, done: 0, total: 0 };
 		try {
@@ -269,10 +282,13 @@ class LauncherState {
 			});
 			return true;
 		} catch (error) {
-			this.error = describe(error);
+			// A stop the player asked for arrives here as a failure. It is not one, and the red
+			// banner is for things that went wrong on their own.
+			if (!this.cancelling) this.error = describe(error);
 			return false;
 		} finally {
 			this.busyHosting = false;
+			this.cancelling = false;
 			this.progress = null;
 		}
 	}
@@ -319,8 +335,12 @@ class LauncherState {
 		await this.loadHosts();
 	}
 
+	// The question sits here, not on the trash icon: what this deletes is somebody's world,
+	// and a second call site that forgot to ask would lose one without a word.
 	async removeHost(id: string, deleteFiles: boolean) {
+		const name = this.hosts.find((entry) => entry.id === id)?.name ?? "";
 		try {
+			if (deleteFiles && !(await confirmDelete(t("host.removeConfirm", { name }), t("common.delete"), t("common.cancel")))) return;
 			this.hosts = await call<HostedServer[]>("remove_host", { id, deleteFiles });
 			if (this.watching === id) this.unwatch();
 		} catch (error) {
@@ -517,8 +537,15 @@ class LauncherState {
 		}
 	}
 
+	// Same choke point as removeHost: the ask belongs to the deletion, not to the button.
 	async removeInstance(id: string) {
-		this.instances = await call<Instance[]>("remove_instance", { id });
+		const name = this.instances.find((entry) => entry.id === id)?.name ?? "";
+		try {
+			if (!(await confirmDelete(t("instances.removeConfirm", { name }), t("common.remove"), t("common.cancel")))) return;
+			this.instances = await call<Instance[]>("remove_instance", { id });
+		} catch (error) {
+			this.error = describe(error);
+		}
 	}
 
 	async playInstance(instance: Instance) {
@@ -566,6 +593,9 @@ class LauncherState {
 	async launch(id: string, kind: "server" | "instance", label: string, start: () => Promise<unknown>) {
 		this.playing = id;
 		this.error = null;
+		// A cancel clicked after the last checkpoint has nowhere to land, so the flag can outlive the
+		// job that set it. Left standing it deadens this job's cancel button and hides its errors.
+		this.cancelling = false;
 		this.progress = { phase: t("progress.prepare"), detail: label, done: 0, total: 0 };
 
 		const stop = await onRunning(() => {
@@ -576,9 +606,12 @@ class LauncherState {
 		try {
 			await start();
 		} catch (error) {
-			this.error = describe(error);
+			// A stop the player asked for arrives here as a failure. It is not one, and the red
+			// banner is for things that went wrong on their own.
+			if (!this.cancelling) this.error = describe(error);
 		} finally {
 			stop();
+			this.cancelling = false;
 			delete this.running[id];
 			if (this.playing === id) this.playing = null;
 			this.progress = null;
@@ -863,6 +896,8 @@ class LauncherState {
 	/** Put the chosen language and theme into effect. Every screen reads both through them. */
 	applyLanguage() {
 		locale.current = resolveLocale(this.settings.language ?? "system");
+		// The attribute too, not just the dict: a screen reader takes its phonetics from the DOM.
+		document.documentElement.lang = locale.current;
 		applyTheme(this.settings);
 	}
 }

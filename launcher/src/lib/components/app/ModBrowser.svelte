@@ -124,7 +124,7 @@
 		<div class="min-w-0">
 			<h1 class="truncate text-sm font-semibold">{t("mods.title")}</h1>
 			<p class="truncate text-xs text-muted-foreground">
-				{launcher.browsing?.name}{#if address}<span class="font-mono text-muted-foreground/70"
+				{launcher.browsing?.name}{#if address}<span class="font-mono text-muted-foreground-dim"
 					>&nbsp;·&nbsp;{address}</span
 				>{/if}
 			</p>
@@ -245,7 +245,7 @@
 								class="size-11 object-cover"
 							/>
 						{:else}
-							<Package class="size-4 text-muted-foreground/60" />
+							<Package class="size-4 text-muted-foreground-dim" />
 						{/if}
 					</div>
 
@@ -289,7 +289,7 @@
 						</div>
 
 						{#if hit.description}
-							<p class="mt-0.5 truncate text-xs text-muted-foreground/70" title={hit.description}>
+							<p class="mt-0.5 truncate text-xs text-muted-foreground-dim" title={hit.description}>
 								{hit.description}
 							</p>
 						{/if}

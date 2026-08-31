@@ -63,7 +63,7 @@
 							</p>
 						{:else if block.kind === "bullet"}
 							<p class="flex gap-1.5 text-xs leading-relaxed break-words text-muted-foreground">
-								<span class="shrink-0 text-muted-foreground/50">•</span>
+								<span class="shrink-0 text-muted-foreground-dim">•</span>
 								<span class="min-w-0">{@render parts(block.parts)}</span>
 							</p>
 						{:else if block.kind === "row"}

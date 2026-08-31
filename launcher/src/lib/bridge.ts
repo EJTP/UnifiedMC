@@ -136,6 +136,18 @@ export async function pickJava(title: string): Promise<string | null> {
 	return typeof picked === "string" ? picked : null;
 }
 
+/**
+ * The last question before a directory leaves the disk. The OS modal rather than one of our
+ * own dialogs: this one has to survive a misplaced click, and a card-sized dialog is
+ * dismissed by the same stray Escape that closes everything else in the window. The labels
+ * come from the caller - the bridge does not know the language.
+ */
+export async function confirmDelete(message: string, okLabel: string, cancelLabel: string): Promise<boolean> {
+	if (!inTauri) return true;
+	const { confirm } = await import("@tauri-apps/plugin-dialog");
+	return confirm(message, { kind: "warning", okLabel, cancelLabel });
+}
+
 export async function onProgress(handler: (progress: Progress) => void): Promise<() => void> {
 	if (!inTauri) {
 		return () => {};

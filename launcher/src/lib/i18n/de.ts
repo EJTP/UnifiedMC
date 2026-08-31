@@ -9,6 +9,7 @@ export default {
 	"common.add": "Hinzufügen",
 	"common.create": "Anlegen",
 	"common.remove": "Entfernen",
+	"common.delete": "Löschen",
 	"common.playing": "Läuft",
 	"common.play": "Spielen",
 	"common.starting": "Startet",
@@ -67,6 +68,8 @@ export default {
 	"instances.noMods": "ohne Mods",
 	"instances.name": "Name",
 	"instances.action.remove": "{name} entfernen",
+	"instances.removeConfirm":
+		"„{name}“ wird aus dem Launcher entfernt. Die Dateien bleiben auf der Festplatte — Welten, Mods und Einstellungen werden nicht gelöscht.",
 	"instances.action.mods": "Mods für {name}",
 	"instances.loading": "Instanzen werden geladen …",
 
@@ -191,6 +194,7 @@ export default {
 	"progress.java": "Java wird vorbereitet",
 	"progress.download": "Dateien werden geladen",
 	"progress.launch": "Minecraft startet",
+	"progress.cancelling": "Wird nach dieser Datei beendet",
 
 	/* --------------------------------------------------------------- window. */
 	"window.minimise": "Minimieren",
@@ -203,6 +207,7 @@ export default {
 	"error.serverClosedConnection": "Der Server hat die Verbindung geschlossen, ohne zu antworten. Große Netzwerke drosseln Status-Abfragen — kurz warten und erneut prüfen.",
 	"error.alreadyOnAServer": "Du bist schon auf einem Server. Ein Konto kann immer nur auf einem Server gleichzeitig spielen — Singleplayer geht daneben.",
 	"error.accessDeniedHint": "Wahrscheinlich läuft Minecraft noch und hält die Datei fest. Beende das Spiel und versuche es erneut. Sonst: Ordner schreibgeschützt oder ein Virenscanner dazwischen.",
+	"error.cancelled": "Abgebrochen.",
 	"error.noManifest": "Der Server veröffentlicht kein Manifest.",
 	"error.noSuchServer": "Diesen Server gibt es nicht mehr.",
 	"error.noSuchInstance": "Diese Instanz gibt es nicht mehr.",
@@ -244,6 +249,8 @@ export default {
 
 	/* -------------------- hosting, updates, and the filter box. */
 	"common.filter": "Filtern",
+	"common.filterHint": "Filtern ({key}+F)",
+	"common.ctrlKey": "Strg",
 	"common.noMatches": "Nichts passt zu „{query}“",
 	"common.clearFilter": "Filter zurücksetzen",
 	"nav.hosting": "Hosten",
@@ -290,6 +297,8 @@ export default {
 	"host.content": "Mods und Packs hinzufügen",
 	"host.openFolder": "Ordner öffnen",
 	"host.remove": "Diesen Server löschen",
+	"host.removeConfirm":
+		"„{name}“ wird mitsamt allen Dateien von der Festplatte gelöscht — Welt, Mods und Konfiguration. Das lässt sich nicht rückgängig machen.",
 	"host.copy": "Adresse kopieren",
 	"host.copied": "kopiert",
 	"host.action.remove": "{name} löschen",
