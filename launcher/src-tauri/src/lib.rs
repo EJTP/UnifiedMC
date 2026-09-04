@@ -1229,7 +1229,7 @@ fn cancel() {
 pub fn run() {
     // WebKitGTK 2.42+ renders through DMA-BUF, which several drivers no longer serve: the
     // window comes up white, or EGL refuses the display outright. The fallback renderer is
-    // plenty for a launcher UI. Only a default, so anyone can still ask for the fast path.
+    // plenty for a launcher UI. Only a default: an explicit setting in the environment wins.
     #[cfg(target_os = "linux")]
     if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
